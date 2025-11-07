@@ -24,6 +24,37 @@ import random
 import subprocess
 from typing import Tuple, List, Optional
 
+"""Import / solver resolution notes:
+The file dynamically tries to import the backend solver with a runtime sys.path
+insertion inside generate_solution(). That works at execution time but static
+linters (and some tooling) flag `from app.utils.solver import solve_question`
+as unresolved because the path modification happens later.
+
+To satisfy both runtime reliability and static analysis, we perform a guarded
+import here with multiple fallbacks. If none succeed, `solve_question` is set
+to None and the downstream code will skip the symbolic solver path.
+"""
+try:  # Direct import when running from backend context (uvicorn working dir)
+    from app.utils.solver import solve_question  # type: ignore
+except Exception:  # noqa: broad-except – fall back to alternative resolutions
+    solve_question = None  # type: ignore
+
+    # Attempt to add backend path and retry (works when invoking from repo root or model dir)
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+        repo_root = _Path(__file__).resolve().parents[1]
+        backend_dir = repo_root / "mathai_backend"
+        if backend_dir.exists() and str(backend_dir) not in _sys.path:
+            _sys.path.insert(0, str(backend_dir))
+        try:
+            from app.utils.solver import solve_question  # type: ignore
+        except Exception:  # noqa: broad-except
+            solve_question = None  # type: ignore
+    except Exception:
+        # Final fallback: leave solve_question as None
+        solve_question = None  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -320,6 +351,7 @@ def generate_manual_solution(question: str, topic: str) -> Tuple[str, str]:
 
 
 def generate_solution(question: str, topic: str, model: str = "phi") -> Tuple[str, List[str]]:
+<<<<<<< HEAD
     # Try manual first
     ans, expl = generate_manual_solution(question, topic)
     if ans:
@@ -329,6 +361,64 @@ def generate_solution(question: str, topic: str, model: str = "phi") -> Tuple[st
     prompt = PromptTemplates.solution_prompt(question, topic)
     raw = _call_ollama(prompt, model, timeout=15)
     if not raw:
+=======
+    """Generate solution (answer + steps) for a question using the model.
+    Returns (answer, solution_steps).
+    
+    Strategy:
+    1. Try symbolic solver first (deterministic, always correct)
+    2. If solver succeeds, optionally use LLM to enrich explanation steps
+    3. If solver fails, use LLM with structured prompt and verification
+    """
+    # STEP 1: Try symbolic solver
+    try:
+        if solve_question is not None:
+            solver_result = solve_question(question, topic)
+            if solver_result:
+                solver_answer, solver_steps = solver_result
+                print(f"✓ Symbolic solver found answer: {solver_answer}")
+                return solver_answer, solver_steps
+        else:
+            print("Symbolic solver not available (solve_question is None). Skipping to LLM fallback.")
+    except Exception as e:
+        print(f"Error during symbolic solver attempt: {e}")
+    
+    # STEP 2: Solver failed or unavailable, use LLM
+    # Use structured prompt template with deterministic temperature for accuracy
+    answer_prompt = PromptTemplates.solution_prompt(question, topic)
+    
+    print(f"Generating solution with model {model}...")
+    
+    # Use exponential backoff with deterministic temperature for solutions
+    def generate_with_timeout(timeout: int) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["ollama", "run", model, answer_prompt],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=timeout
+            )
+            return result.stdout.strip() if result.stdout else None
+        except Exception as e:
+            print(f"Solution generation error: {str(e)}")
+            return None
+    
+    solution_text = retry_with_exponential_backoff(
+        generate_with_timeout,
+        max_retries=ModelConfig.MAX_RETRIES,
+        initial_timeout=15
+    )
+    
+    answer = ""
+    solution_steps: List[str] = []
+    
+    if not solution_text:
+        # fallback to manual
+        ans, expl = generate_manual_solution(question, topic)
+        if ans:
+            return ans, [f"1. {expl}"] if expl else []
+>>>>>>> a4bbd5b (Enhance dynamic solver import handling and improve UI component styling)
         return "", []
     # Parse
     answer = ""
