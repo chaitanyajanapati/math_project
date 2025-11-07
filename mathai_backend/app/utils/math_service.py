@@ -5,9 +5,20 @@ import sys
 import os
 from pathlib import Path
 
-# Add AI models path to system path
-MODEL_PATH = Path.home() / "mathai_ai_models"
-sys.path.append(str(MODEL_PATH))
+# Add repository-relative AI models path to system path so imports work when
+# running the backend from inside the `mathai_backend` folder.
+# math_service.py is at: <repo>/mathai_backend/app/utils/math_service.py
+# repo root is parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+MODEL_PATH = PROJECT_ROOT / "mathai_ai_models"
+if MODEL_PATH.exists():
+    # Insert at front so it takes precedence
+    sys.path.insert(0, str(MODEL_PATH))
+else:
+    # Fallback to a home-directory-based path for backwards compatibility
+    fallback = Path.home() / "mathai_ai_models"
+    if str(fallback) not in sys.path:
+        sys.path.insert(0, str(fallback))
 
 from generate_math_question import generate_question, generate_hint, generate_solution
 
@@ -17,17 +28,21 @@ class MathAIService:
         pass
     
     def generate_question_with_solution(self, grade: int, difficulty: str, topic: str) -> Tuple[str, str, List[str], List[str]]:
-        """Generate a question along with its solution and hints"""
+        """Generate a question along with its solution and hints (using solver when possible)"""
         try:
             print(f"Generating question for grade {grade}, {difficulty} difficulty, topic: {topic}")
-            # generate_question returns (question, answer, hint, solution_steps)
-            question, answer, hint_from_model, solution_steps = generate_question(grade, difficulty, topic)
+            # generate_question now returns only the question (answer/hint/steps are generated on-demand)
+            question, _, _, _ = generate_question(grade, difficulty, topic)
             print(f"Generated question: {question}")
-            print(f"Answer: {answer}")
-            # Prefer the hint from the model if available; otherwise fall back to a generic hint
-            hint = hint_from_model if hint_from_model and len(str(hint_from_model).strip()) > 0 else "Think about the key concepts and formulas you know for this type of problem."
             
-            # Convert solution steps to list if it isn't already
+            # Generate solution using the enhanced pipeline (solver + LLM)
+            answer, solution_steps = generate_solution(question, topic)
+            print(f"Answer: {answer}")
+            
+            # Generate hint on-demand
+            hint = generate_hint(question, topic) if answer else "Think about the key concepts and formulas you know for this type of problem."
+            
+            # Ensure solution_steps is a list
             if isinstance(solution_steps, str):
                 solution_steps = solution_steps.split("\n")
             elif not isinstance(solution_steps, list):
@@ -38,7 +53,7 @@ class MathAIService:
             for i, step in enumerate(solution_steps, 1):
                 step = step.strip()
                 if step:
-                    if step.startswith(f"{i}.") or step.startswith("-") or step.startswith("*"):
+                    if step.startswith(f"{i}.") or step.startswith("-") or step.startswith("*") or re.match(r"^\d+\.", step):
                         formatted_steps.append(step)
                     else:
                         formatted_steps.append(f"{i}. {step}")

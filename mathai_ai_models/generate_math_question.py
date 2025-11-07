@@ -133,7 +133,7 @@ def generate_manual_solution(question: str, topic: str) -> Tuple[Optional[str], 
     return None, None
 
 
-def generate_question(grade: int, difficulty: str, topic: str, model: str = "phi") -> Tuple[str, str, str, List[str]]:
+def generate_question(grade: int, difficulty: str, topic: str, model: str = "qwen2.5:7b") -> Tuple[str, str, str, List[str]]:
     """Generate only the question text. Return (question, answer, hint, solution_steps).
     By default answer/hint/steps are empty — they are generated on demand.
     """
@@ -249,7 +249,7 @@ def generate_question(grade: int, difficulty: str, topic: str, model: str = "phi
     return question, "", "", []
 
 
-def generate_hint(question: str, topic: str, model: str = "phi") -> str:
+def generate_hint(question: str, topic: str, model: str = "qwen2.5:7b") -> str:
     """Generate a short hint for a question using the model. Falls back to generic hint."""
     hint = None
     for timeout in [5, 10, 15]:
@@ -276,10 +276,40 @@ def generate_hint(question: str, topic: str, model: str = "phi") -> str:
     return hint
 
 
-def generate_solution(question: str, topic: str, model: str = "phi") -> Tuple[str, List[str]]:
+def generate_solution(question: str, topic: str, model: str = "qwen2.5:7b") -> Tuple[str, List[str]]:
     """Generate solution (answer + steps) for a question using the model.
     Returns (answer, solution_steps).
+    
+    Strategy:
+    1. Try symbolic solver first (deterministic, always correct)
+    2. If solver succeeds, optionally use LLM to enrich explanation steps
+    3. If solver fails, use LLM with structured prompt and verification
     """
+    # STEP 1: Try symbolic solver
+    try:
+        # Import solver (assuming it's in mathai_backend/app/utils/solver.py)
+        # For now, we'll import from the parent if available
+        import sys
+        from pathlib import Path
+        backend_path = Path(__file__).resolve().parents[1] / "mathai_backend"
+        if backend_path.exists() and str(backend_path) not in sys.path:
+            sys.path.insert(0, str(backend_path))
+        
+        try:
+            from app.utils.solver import solve_question
+            solver_result = solve_question(question, topic)
+            
+            if solver_result:
+                solver_answer, solver_steps = solver_result
+                print(f"✓ Symbolic solver found answer: {solver_answer}")
+                # Return solver result directly (deterministic and correct)
+                return solver_answer, solver_steps
+        except ImportError as e:
+            print(f"Solver not available: {e}")
+    except Exception as e:
+        print(f"Error trying symbolic solver: {e}")
+    
+    # STEP 2: Solver failed or unavailable, use LLM
     # Create prompt asking for ANSWER and SOLUTION
     answer = ""
     solution_steps: List[str] = []
