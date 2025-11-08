@@ -351,76 +351,33 @@ def generate_manual_solution(question: str, topic: str) -> Tuple[str, str]:
 
 
 def generate_solution(question: str, topic: str, model: str = "phi") -> Tuple[str, List[str]]:
-<<<<<<< HEAD
-    # Try manual first
+    """Generate solution (answer + steps) using solver-first, then LLM fallback.
+
+    Returns: (answer, steps)
+    """
+    # 1) Try symbolic solver if available
+    try:
+        if 'solve_question' in globals() and solve_question is not None:  # type: ignore[name-defined]
+            solver_result = solve_question(question, topic)  # type: ignore[name-defined]
+            if solver_result:
+                solver_answer, solver_steps = solver_result
+                return str(solver_answer).strip(), list(solver_steps)
+    except Exception as e:
+        print(f"Symbolic solver failed: {e}")
+
+    # 2) Try simple manual parse for linear forms
     ans, expl = generate_manual_solution(question, topic)
     if ans:
-        return ans, ["1. " + expl, "2. Substitute back to verify."]
+        steps = [s for s in [expl, "Substitute back to verify."] if s]
+        steps = [f"{i+1}. {s}" for i, s in enumerate(steps)]
+        return ans, steps
 
-    # Fallback minimal LLM
+    # 3) LLM fallback
     prompt = PromptTemplates.solution_prompt(question, topic)
     raw = _call_ollama(prompt, model, timeout=15)
     if not raw:
-=======
-    """Generate solution (answer + steps) for a question using the model.
-    Returns (answer, solution_steps).
-    
-    Strategy:
-    1. Try symbolic solver first (deterministic, always correct)
-    2. If solver succeeds, optionally use LLM to enrich explanation steps
-    3. If solver fails, use LLM with structured prompt and verification
-    """
-    # STEP 1: Try symbolic solver
-    try:
-        if solve_question is not None:
-            solver_result = solve_question(question, topic)
-            if solver_result:
-                solver_answer, solver_steps = solver_result
-                print(f"✓ Symbolic solver found answer: {solver_answer}")
-                return solver_answer, solver_steps
-        else:
-            print("Symbolic solver not available (solve_question is None). Skipping to LLM fallback.")
-    except Exception as e:
-        print(f"Error during symbolic solver attempt: {e}")
-    
-    # STEP 2: Solver failed or unavailable, use LLM
-    # Use structured prompt template with deterministic temperature for accuracy
-    answer_prompt = PromptTemplates.solution_prompt(question, topic)
-    
-    print(f"Generating solution with model {model}...")
-    
-    # Use exponential backoff with deterministic temperature for solutions
-    def generate_with_timeout(timeout: int) -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["ollama", "run", model, answer_prompt],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=timeout
-            )
-            return result.stdout.strip() if result.stdout else None
-        except Exception as e:
-            print(f"Solution generation error: {str(e)}")
-            return None
-    
-    solution_text = retry_with_exponential_backoff(
-        generate_with_timeout,
-        max_retries=ModelConfig.MAX_RETRIES,
-        initial_timeout=15
-    )
-    
-    answer = ""
-    solution_steps: List[str] = []
-    
-    if not solution_text:
-        # fallback to manual
-        ans, expl = generate_manual_solution(question, topic)
-        if ans:
-            return ans, [f"1. {expl}"] if expl else []
->>>>>>> a4bbd5b (Enhance dynamic solver import handling and improve UI component styling)
         return "", []
-    # Parse
+
     answer = ""
     steps: List[str] = []
     lines = [l.strip() for l in raw.splitlines() if l.strip()]
@@ -429,12 +386,12 @@ def generate_solution(question: str, topic: str, model: str = "phi") -> Tuple[st
             answer = line.split(":", 1)[1].strip()
         else:
             steps.append(line)
-    # fallback numeric pick
+
     if not answer:
         nums = re.findall(r"[-+]?\d*\.?\d+", raw)
         if nums:
             answer = nums[-1]
-    # Number steps
+
     steps = [f"{i+1}. {s}" for i, s in enumerate(steps)]
     return answer.strip(), steps
 

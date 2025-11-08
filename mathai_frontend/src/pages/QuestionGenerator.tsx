@@ -102,7 +102,7 @@ export default function QuestionGenerator() {
         Math AI Question Generator
       </h1>
 
-  <div className="grid grid-cols-4 gap-4 w-full max-w-6xl mx-auto flex-1 overflow-hidden">
+      <div className="grid grid-cols-4 gap-4 w-full max-w-6xl mx-auto flex-1 overflow-hidden">
         {/* Left: Controls */}
         <div className="bg-white border-2 border-indigo-300 shadow-lg rounded-xl p-5 col-span-1 flex flex-col overflow-auto">
           <h2 className="text-lg font-semibold text-indigo-700 mb-3 flex items-center gap-2">
@@ -169,7 +169,7 @@ export default function QuestionGenerator() {
           </div>
         </div>
 
-  {/* Hint Card */}
+        {/* Hint Card */}
         <div className="bg-white border-2 border-indigo-300 shadow-lg rounded-xl p-5 flex flex-col overflow-hidden col-span-2">
           <h3 className="text-lg font-semibold text-indigo-700 mb-3 flex items-center gap-2">
             <Lightbulb className="w-5 h-5" />
@@ -192,7 +192,7 @@ export default function QuestionGenerator() {
           </div>
         </div>
 
-  {/* Solution Steps + Answer Card */}
+        {/* Solution Steps + Answer Card */}
         <div className="bg-white border-2 border-green-300 shadow-lg rounded-xl p-5 flex flex-col overflow-hidden col-span-2">
           <h3 className="text-lg font-semibold text-green-700 mb-3 flex items-center gap-2">
             <CheckCircle className="w-5 h-5" />
@@ -259,4 +259,3 @@ export default function QuestionGenerator() {
     </div>
   );
 }
-// File cleaned: removed stray duplicated conflict remnants.
