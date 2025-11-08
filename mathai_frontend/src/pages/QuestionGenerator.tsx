@@ -5,6 +5,7 @@ import { Sparkles, Lightbulb, CheckCircle, BookOpen, Settings2, Target } from "l
 import MathRenderer from "../components/MathRenderer";
 import Timer from "../components/Timer";
 import GeometryVisualizer from "../components/GeometryVisualizer";
+import { regenerateChoices } from "../services/api";
 
 export default function QuestionGenerator() {
   const [grade, setGrade] = useState<number>(8);
@@ -13,7 +14,7 @@ export default function QuestionGenerator() {
   const [questionType, setQuestionType] = useState<string>("open");
   const [question, setQuestion] = useState<string>("");
   const [questionId, setQuestionId] = useState<string>("");
-  const [hint, setHint] = useState<string>("");
+  // Hints are tracked in allHints array (tiered)
   const [solutionSteps, setSolutionSteps] = useState<string[]>([]);
   const [studentAnswer, setStudentAnswer] = useState<string>("");
   const [choices, setChoices] = useState<string[] | null>(null);
@@ -25,7 +26,7 @@ export default function QuestionGenerator() {
   const [loadingHint, setLoadingHint] = useState<boolean>(false);
   const [loadingSolution, setLoadingSolution] = useState<boolean>(false);
   const [timedMode, setTimedMode] = useState<boolean>(false);
-  const [timeSpent, setTimeSpent] = useState<number>(0);
+  // Time tracking handled internally by Timer; not persisted here
   const [hintLevel, setHintLevel] = useState<number>(0); // 0=none, 1=conceptual, 2=strategic, 3=procedural
   const [allHints, setAllHints] = useState<string[]>([]); // Store all hints received
 
@@ -70,8 +71,7 @@ export default function QuestionGenerator() {
         setChoices(null);
       }
       
-      setSelectedChoice("");
-      setHint("");
+  setSelectedChoice("");
       setSolutionSteps([]);
       setFeedback("");
       setStudentAnswer("");
@@ -95,8 +95,7 @@ export default function QuestionGenerator() {
     setQuestion("");
     setQuestionId("");
     setChoices(null);
-    setSelectedChoice("");
-    setHint("");
+  setSelectedChoice("");
     setSolutionSteps([]);
     setFeedback("");
     setStudentAnswer("");
@@ -119,13 +118,12 @@ export default function QuestionGenerator() {
       const r = await axios.post(API_ENDPOINTS.HINT(questionId), null, {
         params: { hint_level: nextLevel }
       });
-      const newHint = r.data.hint || "";
-      setHint(newHint);
+  const newHint = r.data.hint || "";
       setHintLevel(nextLevel);
       setAllHints(prev => [...prev, newHint]);
     } catch (e) {
       console.error(e);
-      setHint("Could not fetch hint.");
+  setAllHints(prev => [...prev, "Could not fetch hint."]);
     } finally {
       setLoadingHint(false);
     }
@@ -158,6 +156,19 @@ export default function QuestionGenerator() {
     }
   };
 
+  const retryChoices = async () => {
+    if (!questionId) return;
+    try {
+      const res = await regenerateChoices(questionId);
+      const opts = res.choices || [];
+      if (Array.isArray(opts) && opts.length > 0) {
+        setChoices(opts);
+      }
+    } catch (e) {
+      console.error("Failed to regenerate choices", e);
+    }
+  };
+
   const submitAnswer = async () => {
     if (!questionId) return;
     setLoading(true);
@@ -172,7 +183,7 @@ export default function QuestionGenerator() {
       if (data.is_correct) {
         setSolutionSteps(data.solution_steps || []);
       } else {
-        if (data.hint) setHint(data.hint);
+  if (data.hint) setAllHints(prev => [...prev, data.hint]);
         setAttemptNumber((a) => a + 1);
       }
     } catch (e) {
@@ -201,11 +212,7 @@ export default function QuestionGenerator() {
             <span className="text-sm font-medium text-gray-700">Timed Mode</span>
           </label>
           {timedMode && question && (
-            <Timer 
-              mode="stopwatch" 
-              autoStart={true}
-              onTimeUpdate={(seconds) => setTimeSpent(seconds)}
-            />
+            <Timer mode="stopwatch" autoStart={true} onTimeUpdate={() => {}} />
           )}
         </div>
       </div>
@@ -435,6 +442,19 @@ export default function QuestionGenerator() {
                 {loading ? "Checking..." : "Submit Answer"}
               </button>
             </div>
+
+            {/* MCQ Fallback helper */}
+            {questionType === "mcq" && question && (!choices || choices.length === 0) && (
+              <div className="mt-3 p-3 bg-yellow-50 border-2 border-yellow-300 rounded-md">
+                <div className="text-sm text-yellow-800 font-medium mb-2">Multiple choice options not loaded.</div>
+                <button
+                  onClick={retryChoices}
+                  className="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-md shadow-sm text-sm"
+                >
+                  Retry options
+                </button>
+              </div>
+            )}
 
             {feedback && (
               <div className="text-sm font-medium text-gray-700 mt-3 p-3 bg-blue-50 rounded-md border-2 border-blue-200">

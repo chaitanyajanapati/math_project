@@ -1,7 +1,8 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import QuestionGenerator from "./pages/QuestionGenerator.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
-import { BarChart3, Target } from 'lucide-react';
+import QuestionQualityDashboard from "./pages/QuestionQualityDashboard.tsx";
+import { BarChart3, Target, Gauge } from 'lucide-react';
 
 function Navigation() {
   const location = useLocation();
@@ -37,6 +38,17 @@ function Navigation() {
               <BarChart3 className="w-5 h-5" />
               Dashboard
             </Link>
+            <Link
+              to="/quality"
+              className={`px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${
+                location.pathname === '/quality'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-gray-700 hover:bg-blue-50'
+              }`}
+            >
+              <Gauge className="w-5 h-5" />
+              Quality
+            </Link>
           </div>
         </div>
       </div>
@@ -52,6 +64,7 @@ function App() {
         <Routes>
           <Route path="/" element={<QuestionGenerator />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/quality" element={<QuestionQualityDashboard />} />
         </Routes>
       </div>
     </Router>

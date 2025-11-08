@@ -21,6 +21,7 @@ else:
         sys.path.insert(0, str(fallback))
 
 from generate_math_question import generate_question, generate_hint, generate_solution
+from app.utils.solver import solve_question as deterministic_solve
 
 try:
     from progressive_hints import generate_progressive_hints
@@ -358,7 +359,16 @@ class MathAIService:
             (answer, steps) where steps is List[str] or List[Dict] if enhanced=True
         """
         try:
-            answer, steps = generate_solution(question_text, topic, model)
+            # 1) Try deterministic solver first for common patterns
+            try:
+                det = deterministic_solve(question_text, topic)
+            except Exception as _:
+                det = None
+            if det and isinstance(det, tuple) and len(det) == 2:
+                answer, steps = det
+            else:
+                # 2) Fallback to model-based solution
+                answer, steps = generate_solution(question_text, topic, model)
             
             if enhanced and SOLUTION_EXPLAINER_AVAILABLE and steps:
                 # Return enhanced solution with explanations

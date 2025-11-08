@@ -6,4 +6,7 @@ export const API_ENDPOINTS = {
     STUDENT_PROGRESS: (studentId: string) => `${API_BASE}/student-progress/${studentId}`,
     HINT: (questionId: string) => `${API_BASE}/questions/${questionId}/hint`,
     SOLUTION: (questionId: string) => `${API_BASE}/questions/${questionId}/solution`,
+    CHOICES: (questionId: string) => `${API_BASE}/questions/${questionId}/choices`,
+    QUALITY_SUMMARY: `${API_BASE}/quality/summary`,
+    QUALITY_PER_QUESTION: `${API_BASE}/quality/questions`,
 };

@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime
 import time
+from typing import Dict, Any, List
+import json
+from pathlib import Path
 
 from app.models.questions import (
     QuestionRequest, QuestionResponse, AnswerSubmission,
@@ -231,6 +234,47 @@ async def submit_answer(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/questions/{question_id}/choices")
+async def regenerate_choices(
+    question_id: str,
+    math_service: MathAIService = Depends(get_math_service),
+    db: SimpleDB = Depends(get_db)
+):
+    """Regenerate MCQ choices for an existing question without revealing the correct answer.
+    This is useful when initial generation failed to provide options on the frontend.
+    """
+    try:
+        q = db.get_question(question_id)
+        if not q:
+            raise HTTPException(status_code=404, detail="Question not found")
+
+        # Ensure we have a correct answer; generate if missing
+        if not q.correct_answer:
+            ans, steps = math_service.generate_solution_for_question(q.question, q.topic)
+            q.correct_answer = ans
+            q.solution_steps = steps
+            try:
+                db.save_question(q)
+            except Exception as db_error:
+                print(f"Warning: Could not persist generated solution while regenerating choices: {db_error}")
+
+        if not q.correct_answer:
+            # Cannot create choices without an answer
+            return {"choices": []}
+
+        distractors = math_service.generate_distractors(q.correct_answer, q.topic)
+        all_choices = math_service.mix_choices(q.correct_answer, distractors)
+        # Persist choices on the question
+        q.choices = all_choices
+        try:
+            db.save_question(q)
+        except Exception as db_error:
+            print(f"Warning: Could not update question with choices: {db_error}")
+        return {"choices": all_choices}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/student-progress/{student_id}")
 async def get_progress(student_id: str, db: SimpleDB = Depends(get_db)):
     """Get student's progress and performance statistics."""
@@ -248,5 +292,149 @@ async def get_progress(student_id: str, db: SimpleDB = Depends(get_db)):
             "detailed_progress": progress
         }
         
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------- Question Quality & Complexity Dashboard APIs ----------------
+
+# Configure path to mathai_ai_models for validators/scorers (same approach as MathAIService)
+try:
+    import sys
+    from pathlib import Path as _Path
+    PROJECT_ROOT = _Path(__file__).resolve().parents[3]
+    MODEL_PATH = PROJECT_ROOT / "mathai_ai_models"
+    if MODEL_PATH.exists() and str(MODEL_PATH) not in sys.path:
+        sys.path.insert(0, str(MODEL_PATH))
+except Exception as _e:
+    print(f"[quality-endpoints] Warning setting model path: {_e}")
+
+try:
+    from complexity_scorer import ComplexityScorer  # type: ignore
+    from question_validator import QuestionValidator, QuestionQualityScorer  # type: ignore
+    _QUALITY_TOOLS_AVAILABLE = True
+except Exception as _e:
+    print(f"[quality-endpoints] Quality tools unavailable: {_e}")
+    _QUALITY_TOOLS_AVAILABLE = False
+
+
+def _load_all_questions(db: SimpleDB) -> List[QuestionResponse]:
+    """Load all stored questions from the DB file."""
+    try:
+        data_path = db.questions_file
+        raw = json.loads(data_path.read_text()) if data_path.exists() else {}
+        out: List[QuestionResponse] = []
+        for qid, qdata in raw.items():
+            try:
+                out.append(QuestionResponse(**qdata))
+            except Exception as e:
+                print(f"[quality-endpoints] Skipping corrupted question {qid}: {e}")
+        return out
+    except Exception as e:
+        print(f"[quality-endpoints] Failed reading questions.json: {e}")
+        return []
+
+
+@router.get("/quality/summary")
+async def quality_summary(db: SimpleDB = Depends(get_db)):
+    """Aggregate quality and complexity metrics across stored questions.
+
+    Returns a compact summary used by the frontend dashboard. If quality tools
+    are unavailable or there are no questions yet, returns a minimal placeholder
+    so the UI can still render.
+    """
+    try:
+        questions = _load_all_questions(db)
+        if not _QUALITY_TOOLS_AVAILABLE or not questions:
+            return {
+                "counts": {"total": len(questions), "by_topic": {}},
+                "quality": {"overall": 0.0, "clarity": 0.0, "difficulty_calibration": 0.0, "educational_value": 0.0, "engagement": 0.0},
+                "complexity": {"avg_score": 0.0, "by_level": {}},
+                "issues": {"top": []},
+                "samples": []
+            }
+
+        # Aggregates
+        total = len(questions)
+        by_topic: Dict[str, int] = {}
+        sum_quality = {"clarity": 0.0, "difficulty_calibration": 0.0, "educational_value": 0.0, "engagement": 0.0, "overall": 0.0}
+        level_counts: Dict[str, int] = {}
+        issue_counts: Dict[str, int] = {}
+        samples: List[Dict[str, Any]] = []
+
+        for q in questions:
+            by_topic[q.topic] = by_topic.get(q.topic, 0) + 1
+
+            # Compute complexity
+            comp = ComplexityScorer.calculate_complexity(q.question, q.topic)
+            level = comp.get("level", "unknown")
+            level_counts[level] = level_counts.get(level, 0) + 1
+
+            # Compute quality scores/validation
+            scores = QuestionQualityScorer.score_question(q.question, q.correct_answer, q.topic, q.grade)
+            for k in sum_quality.keys():
+                sum_quality[k] += float(scores.get(k, 0.0))
+
+            validation = QuestionValidator.validate(q.question, q.correct_answer, q.solution_steps or [], q.grade, q.difficulty, q.topic)
+            for issue in validation.get("issues", []):
+                issue_counts[issue] = issue_counts.get(issue, 0) + 1
+
+            # Keep a few representative samples (up to 10)
+            if len(samples) < 10:
+                samples.append({
+                    "id": q.id,
+                    "question": q.question,
+                    "topic": q.topic,
+                    "grade": q.grade,
+                    "difficulty": q.difficulty,
+                    "complexity": {
+                        "score": comp.get("score", 0),
+                        "level": comp.get("level", "unknown"),
+                        "normalized": comp.get("normalized", 0.0),
+                    },
+                    "quality": scores,
+                    "issues": validation.get("issues", [])
+                })
+
+        avg_quality = {k: (v / total if total else 0.0) for k, v in sum_quality.items()}
+
+        # Top 5 issues by frequency
+        top_issues = sorted(issue_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_issues_fmt = [{"issue": k, "count": v} for k, v in top_issues]
+
+        return {
+            "counts": {"total": total, "by_topic": by_topic},
+            "quality": avg_quality,
+            "complexity": {"avg_score": sum(c for c in [s.get("quality", {}).get("overall", 0) for s in samples]) if samples else 0.0, "by_level": level_counts},
+            "issues": {"top": top_issues_fmt},
+            "samples": samples
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quality/questions")
+async def quality_per_question(db: SimpleDB = Depends(get_db)):
+    """Return per-question quality + complexity metrics for table views."""
+    try:
+        questions = _load_all_questions(db)
+        if not _QUALITY_TOOLS_AVAILABLE:
+            return []
+        out: List[Dict[str, Any]] = []
+        for q in questions:
+            comp = ComplexityScorer.calculate_complexity(q.question, q.topic)
+            scores = QuestionQualityScorer.score_question(q.question, q.correct_answer, q.topic, q.grade)
+            validation = QuestionValidator.validate(q.question, q.correct_answer, q.solution_steps or [], q.grade, q.difficulty, q.topic)
+            out.append({
+                "id": q.id,
+                "question": q.question,
+                "topic": q.topic,
+                "grade": q.grade,
+                "difficulty": q.difficulty,
+                "complexity": comp,
+                "quality": scores,
+                "issues": validation.get("issues", [])
+            })
+        return out
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
