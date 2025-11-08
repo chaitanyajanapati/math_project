@@ -26,6 +26,206 @@ class MathAIService:
     def __init__(self):
         # Initialize any AI model configurations here
         pass
+
+    # ------------------ Multiple Choice Support Helpers ------------------
+    def generate_distractors(self, correct: str, topic: str, max_count: int = 3):
+        """Generate smart distractor answers based on common mistakes and topic.
+        Creates plausible wrong answers that reflect typical student errors.
+        """
+        if not correct:
+            return []
+        distractors = []
+        base = correct.strip().replace(',', '')  # Remove commas for numeric comparison
+        
+        import random
+        import math
+        
+        try:
+            # Handle fractions
+            if "/" in base and all(p.strip().replace('-','').isdigit() for p in base.split("/", 1)):
+                parts = base.split("/", 1)
+                num, den = parts[0].strip(), parts[1].strip()
+                num_i, den_i = int(num), int(den)
+                
+                # Generate plausible fraction distractors (common mistakes)
+                variations = [
+                    f"{den_i}/{num_i}",  # Inverted fraction
+                    f"{num_i + den_i}/{den_i}",  # Added numerator to numerator
+                    f"{num_i}/{den_i + num_i}",  # Added numerator to denominator
+                    f"{num_i * 2}/{den_i}",  # Doubled numerator
+                    f"{num_i}/{den_i * 2}",  # Doubled denominator
+                    f"{abs(num_i - den_i)}/{den_i}",  # Subtraction error
+                ]
+                
+                # Also add decimal equivalents of wrong fractions
+                for frac in variations[:3]:
+                    try:
+                        fn, fd = map(int, frac.split('/'))
+                        if fd != 0:
+                            decimal_val = fn / fd
+                            variations.append(f"{decimal_val:.4f}".rstrip('0').rstrip('.'))
+                    except:
+                        pass
+                
+                distractors.extend(variations)
+            else:
+                # Try numeric float/integer
+                val = float(base)
+                is_integer = abs(val - round(val)) < 0.0001
+                
+                # Topic-specific distractor strategies
+                if topic == "algebra":
+                    # Common algebra mistakes: sign errors, wrong operations
+                    variations = [
+                        -val,  # Sign error
+                        val * 2,  # Forgot to divide
+                        val / 2 if val != 0 else 1,  # Divided instead of multiplied
+                        val + 1,  # Off-by-one error
+                        val - 1,
+                    ]
+                elif topic == "geometry":
+                    # Common geometry mistakes: wrong formula, forgot π, radius vs diameter
+                    variations = [
+                        val * 2,  # Radius vs diameter confusion
+                        val / 2 if val != 0 else 1,
+                        val * 3.14 if abs(val) < 100 else val * 0.5,  # Forgot/added π
+                        val ** 2 if abs(val) < 20 else val * 1.5,  # Area vs perimeter
+                        math.sqrt(abs(val)) if val > 1 else val * 2,
+                    ]
+                elif topic == "arithmetic":
+                    # Common arithmetic mistakes: operation errors, order of operations
+                    variations = [
+                        val + 10 if abs(val) > 10 else val + 1,
+                        val - 10 if abs(val) > 10 else val - 1,
+                        val * 10 if abs(val) < 10 else val * 1.5,
+                        val / 10 if abs(val) > 10 else val / 2,
+                        -val,
+                    ]
+                elif topic == "trigonometry":
+                    # Common trig mistakes: degrees vs radians, reciprocal functions
+                    variations = [
+                        1 / val if val != 0 else 1,  # Reciprocal
+                        -val,  # Sign error
+                        90 - val if abs(val) <= 90 else val * 0.9,  # Complementary angle
+                        val * 180 / 3.14159 if abs(val) < 10 else val / 57.3,  # Deg/rad
+                    ]
+                elif topic == "probability" or topic == "statistics":
+                    # Common probability mistakes: complement, wrong denominators
+                    if 0 <= val <= 1:
+                        variations = [
+                            1 - val,  # Complement
+                            val * 100,  # Forgot percentage conversion
+                            val / 100 if val > 1 else val * 2,
+                            min(val * 2, 1),  # Doubled probability
+                        ]
+                    else:
+                        variations = [
+                            val * 2,
+                            val / 2,
+                            val + 1,
+                            val - 1,
+                        ]
+                else:
+                    # Default: proportional errors
+                    magnitude = abs(val) if val != 0 else 1
+                    variations = [
+                        val + magnitude * 0.1,
+                        val - magnitude * 0.1,
+                        val * 1.5,
+                        val * 0.5,
+                        -val,
+                    ]
+                
+                # Format and add variations
+                for new_val in variations:
+                    if new_val == val:  # Skip if same as correct answer
+                        continue
+                    
+                    # Format based on original answer format
+                    if is_integer and abs(new_val - round(new_val)) < 0.01:
+                        formatted = str(int(round(new_val)))
+                    elif is_integer:
+                        formatted = str(int(round(new_val)))
+                    else:
+                        # Match decimal places of original answer
+                        if '.' in base:
+                            decimals = len(base.split('.')[1]) if '.' in base else 2
+                            decimals = min(decimals, 4)  # Cap at 4 decimal places
+                        else:
+                            decimals = 2
+                        formatted = f"{new_val:.{decimals}f}".rstrip('0').rstrip('.')
+                    
+                    distractors.append(formatted)
+                    
+        except Exception as e:
+            print(f"Error generating distractors: {e}")
+            # Fallback: simple variations
+            try:
+                val = float(base)
+                distractors.extend([
+                    str(int(val + 1)),
+                    str(int(val - 1)),
+                    str(int(val * 2)),
+                ])
+            except:
+                distractors.extend([
+                    base + " units",
+                    f"Not {base}",
+                    "Cannot be determined",
+                ])
+        
+        # Deduplicate and remove the correct answer
+        out = []
+        seen = set([base.lower(), correct.strip().lower()])
+        for d in distractors:
+            d_clean = str(d).strip().replace(',', '').lower()
+            d_display = str(d).strip()
+            if d_clean and d_clean not in seen and len(d_display) < 50:
+                seen.add(d_clean)
+                out.append(d_display)
+            if len(out) >= max_count:
+                break
+        
+        # Ensure we have exactly max_count distractors with final fallback
+        while len(out) < max_count:
+            try:
+                val = float(base)
+                # Generate a somewhat random but reasonable value
+                if abs(val) > 100:
+                    offset = random.choice([50, -50, 100, -100, 25, -25])
+                elif abs(val) > 10:
+                    offset = random.choice([5, -5, 10, -10, 3, -3])
+                else:
+                    offset = random.choice([1, -1, 2, -2, 0.5, -0.5])
+                
+                new_val = val + offset
+                if new_val == val or new_val == 0:
+                    new_val = val * 1.5 if val > 0 else val * 0.5
+                    
+                is_int = abs(float(base) - round(float(base))) < 0.01
+                candidate = str(int(round(new_val))) if is_int else f"{new_val:.2f}".rstrip('0').rstrip('.')
+                candidate_norm = candidate.replace(',', '').lower()
+                
+                if candidate_norm not in seen:
+                    seen.add(candidate_norm)
+                    out.append(candidate)
+            except:
+                # Last resort
+                placeholder = f"Option {len(out) + 1}"
+                if placeholder not in out:
+                    out.append(placeholder)
+                else:
+                    out.append(f"Answer {len(out) + 1}")
+        
+        return out[:max_count]
+
+    def mix_choices(self, correct: str, distractors):
+        import random
+        if not correct:
+            return []
+        choices = [correct] + list(distractors)
+        random.shuffle(choices)
+        return choices
     
     def generate_question_with_solution(self, grade: int, difficulty: str, topic: str) -> Tuple[str, str, List[str], List[str]]:
         """Generate a question along with its solution and hints (using solver when possible)"""

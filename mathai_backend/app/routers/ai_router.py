@@ -29,26 +29,40 @@ async def generate_question_api(
     try:
         question_text = math_service.generate_question_only(req.grade, req.difficulty, req.topic)
 
+        # Always generate solution (needed for validation and display after correct answer)
+        answer, solution_steps = math_service.generate_solution_for_question(question_text, req.topic)
+        
+        # For MCQ, also generate distractors
+        all_choices = None
+        if req.question_type == "mcq":
+            distractors = math_service.generate_distractors(answer, req.topic) if answer else []
+            all_choices = math_service.mix_choices(answer, distractors) if answer else None
+
         question_response = QuestionResponse(
             question=question_text,
             grade=req.grade,
             difficulty=req.difficulty,
             topic=req.topic,
-            correct_answer="",
+            correct_answer=answer or "",
+            normalized_answers=math_service.normalize_answer(answer) if answer else [],
+            choices=all_choices,
             hints=[],
-            solution_steps=[]
+            solution_steps=solution_steps or []
         )
 
-        print(f"Created question response with question: {question_text}")
+        print(f"Created question response with question: {question_text} | type={req.question_type} | choices={all_choices} | steps={len(solution_steps) if solution_steps else 0}")
 
         try:
-            # Store the question (created_at will be serialized properly by DB)
             db.save_question(question_response)
         except Exception as db_error:
             print(f"Warning: Could not save question to database: {str(db_error)}")
 
-        # Return question to frontend without the correct answer
-        return question_response
+        # Hide correct_answer, normalized_answers, and solution_steps before returning to frontend
+        safe_response = question_response.model_copy()
+        safe_response.correct_answer = ""
+        safe_response.normalized_answers = []
+        safe_response.solution_steps = []  # Hide steps initially
+        return safe_response
 
     except Exception as e:
         print(f"Error in generate_question_api: {str(e)}")
@@ -94,6 +108,12 @@ async def generate_solution_api(
         if not q:
             raise HTTPException(status_code=404, detail="Question not found")
 
+        # If solution already exists (e.g., for MCQ questions), return it
+        if q.correct_answer and q.solution_steps:
+            print(f"Returning stored solution for question {question_id}")
+            return {"answer": q.correct_answer, "solution_steps": q.solution_steps}
+        
+        # Otherwise, generate solution on-demand
         answer, steps = math_service.generate_solution_for_question(q.question, q.topic)
 
         # Normalize answer(s) and store variants for robust validation
@@ -183,10 +203,10 @@ async def submit_answer(
             confidence=confidence,
             feedback=feedback,
             hint=next_hint if not is_correct else None,
-            next_step=question.solution_steps[submission.attempt_number - 1] if not is_correct and question.solution_steps else None,
+            next_step=question.solution_steps[submission.attempt_number - 1] if not is_correct and question.solution_steps and submission.attempt_number <= len(question.solution_steps) else None,
             points_earned=points,
             time_taken=time_taken,
-            solution_steps=question.solution_steps if is_correct else None,
+            solution_steps=question.solution_steps if is_correct else [],
             correct_answer=question.correct_answer if is_correct else None
         )
         

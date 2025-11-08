@@ -7,6 +7,7 @@ class QuestionRequest(BaseModel):
     grade: int = Field(..., ge=1, le=12)
     difficulty: str = Field(..., pattern="^(easy|medium|hard)$")
     topic: str
+    question_type: str = Field(default="open", pattern="^(open|mcq)$")  # "open" or "mcq"
     
 class QuestionResponse(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -16,6 +17,7 @@ class QuestionResponse(BaseModel):
     topic: str
     correct_answer: str
     normalized_answers: Optional[List[str]] = None
+    choices: Optional[List[str]] = None  # Multiple-choice options (correct one included)
     hints: List[str]
     solution_steps: List[str]
     created_at: datetime = Field(default_factory=datetime.now)

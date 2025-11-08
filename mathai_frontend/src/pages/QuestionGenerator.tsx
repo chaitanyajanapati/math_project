@@ -7,11 +7,14 @@ export default function QuestionGenerator() {
   const [grade, setGrade] = useState<number>(8);
   const [difficulty, setDifficulty] = useState<string>("medium");
   const [topic, setTopic] = useState<string>("algebra");
+  const [questionType, setQuestionType] = useState<string>("open");
   const [question, setQuestion] = useState<string>("");
   const [questionId, setQuestionId] = useState<string>("");
   const [hint, setHint] = useState<string>("");
   const [solutionSteps, setSolutionSteps] = useState<string[]>([]);
   const [studentAnswer, setStudentAnswer] = useState<string>("");
+  const [choices, setChoices] = useState<string[] | null>(null);
+  const [selectedChoice, setSelectedChoice] = useState<string>("");
   const [attemptNumber, setAttemptNumber] = useState<number>(1);
   const [feedback, setFeedback] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
@@ -38,11 +41,14 @@ export default function QuestionGenerator() {
           grade,
           difficulty,
           topic,
+          question_type: questionType,
         },
         { signal: controller.signal }
       );
       setQuestion(res.data.question);
       setQuestionId(res.data.id || "");
+      setChoices(Array.isArray(res.data.choices) ? res.data.choices : null);
+      setSelectedChoice("");
       setHint("");
       setSolutionSteps([]);
       setFeedback("");
@@ -64,6 +70,8 @@ export default function QuestionGenerator() {
   useEffect(() => {
     setQuestion("");
     setQuestionId("");
+    setChoices(null);
+    setSelectedChoice("");
     setHint("");
     setSolutionSteps([]);
     setFeedback("");
@@ -109,7 +117,7 @@ export default function QuestionGenerator() {
     try {
       const r = await axios.post(API_ENDPOINTS.SUBMIT_ANSWER, {
         question_id: questionId,
-        student_answer: studentAnswer,
+        student_answer: choices && selectedChoice ? selectedChoice : studentAnswer,
         attempt_number: attemptNumber,
       });
       const data = r.data;
@@ -176,6 +184,15 @@ export default function QuestionGenerator() {
               <option value="number_theory">Number Theory</option>
               <option value="calculus">Calculus</option>
             </select>
+          <label className="block mb-1 font-medium text-gray-700">Question Type:</label>
+            <select
+              value={questionType}
+              onChange={(e) => setQuestionType(e.target.value)}
+              className="border-2 border-indigo-200 p-2 w-full rounded-md mb-2 focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="open">Open-ended</option>
+              <option value="mcq">Multiple Choice</option>
+            </select>
         </div>
 
         {/* Question Panel */}
@@ -184,11 +201,11 @@ export default function QuestionGenerator() {
             <BookOpen className="w-5 h-5" />
             Question
           </h2>
-          <div className="mt-2 flex items-center space-x-3">
+          <div className="mt-2 flex items-center space-x-2">
             <button
               onClick={handleGenerate}
               disabled={generating}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 transition shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Sparkles className={`w-4 h-4 ${generating ? 'animate-spin' : ''}`} />
               {generating ? "Generating..." : "Generate Question"}
@@ -205,90 +222,125 @@ export default function QuestionGenerator() {
           </div>
         </div>
 
-        {/* Hint Card */}
-        <div className="bg-white border-2 border-indigo-300 shadow-lg rounded-xl p-5 flex flex-col overflow-hidden col-span-2">
-          <h3 className="text-lg font-semibold text-indigo-700 mb-3 flex items-center gap-2">
+        {/* Hint & Solution Steps Card */}
+        <div className="bg-white border-2 border-purple-300 shadow-lg rounded-xl p-5 flex flex-col overflow-hidden col-span-2">
+          <h3 className="text-lg font-semibold text-purple-700 mb-3 flex items-center gap-2">
             <Lightbulb className="w-5 h-5" />
-            Hint
+            Hint & Solution
           </h3>
-          <div className="mb-3">
+          <div className="mb-3 flex items-center gap-2">
             <button
               onClick={fetchHint}
               disabled={loadingHint || !questionId}
-              className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Lightbulb className={`w-4 h-4 ${loadingHint ? 'animate-spin' : ''}`} />
-              {loadingHint ? "Hint..." : "Get Hint"}
+              {loadingHint ? "Loading..." : "Get Hint"}
             </button>
-          </div>
-          <div className="flex-1 overflow-auto">
-            <div className="p-4 bg-indigo-50 rounded-md border-2 border-indigo-200 min-h-[160px] text-indigo-900 whitespace-pre-wrap">
-              {hint ? hint : <span className="text-indigo-400">Hint will appear here.</span>}
-            </div>
-          </div>
-        </div>
-
-        {/* Solution Steps + Answer Card */}
-        <div className="bg-white border-2 border-green-300 shadow-lg rounded-xl p-5 flex flex-col overflow-hidden col-span-2">
-          <h3 className="text-lg font-semibold text-green-700 mb-3 flex items-center gap-2">
-            <CheckCircle className="w-5 h-5" />
-            Solution Steps & Answer
-          </h3>
-          <div className="mb-3">
             <button
               onClick={fetchSolution}
               disabled={loadingSolution || !questionId}
-              className="px-3 py-2 bg-gray-800 hover:bg-gray-900 text-white rounded-md shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white rounded-md shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <BookOpen className={`w-4 h-4 ${loadingSolution ? 'animate-spin' : ''}`} />
               {loadingSolution ? "Loading..." : "Get Solution"}
             </button>
           </div>
-          <div className="flex-1 overflow-auto">
-            {solutionSteps && solutionSteps.length > 0 ? (
-              <ol className="list-decimal list-inside space-y-3 bg-green-50 p-4 rounded-md border-2 border-green-300 shadow-inner min-h-[160px]">
-                {solutionSteps.map((s, i) => (
-                  <li key={i} className="text-gray-800 leading-relaxed whitespace-pre-wrap">{s}</li>
-                ))}
-              </ol>
-            ) : (
-              <div className="p-4 rounded-md border-2 border-green-200 bg-green-50 min-h-[160px] text-green-600">
-                Solution steps will appear here.
+          <div className="flex-1 overflow-y-auto">
+            {/* Hint Section */}
+            {hint && (
+              <div className="mb-4">
+                <h4 className="text-sm font-semibold text-indigo-700 mb-2 flex items-center gap-1">
+                  <Lightbulb className="w-4 h-4" />
+                  Hint:
+                </h4>
+                <div className="p-4 bg-indigo-50 rounded-md border-2 border-indigo-200 text-indigo-900 whitespace-pre-wrap">
+                  {hint}
+                </div>
               </div>
             )}
-          </div>
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Your Answer</label>
-            <input
-              type="text"
-              value={studentAnswer}
-              onChange={(e) => setStudentAnswer(e.target.value)}
-              placeholder="Enter answer (e.g. 3/8 or 0.375)"
-              className="border-2 border-gray-300 focus:border-green-500 p-2 w-full rounded-md mt-1 focus:outline-none"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  const btn = document.querySelector('#submit-answer-btn') as HTMLButtonElement | null;
-                  if (btn && !btn.disabled) btn.click();
-                }
-              }}
-            />
 
-            <div className="mt-2">
-              <button
-                onClick={submitAnswer}
-                id="submit-answer-btn"
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md shadow-md disabled:opacity-50"
-                disabled={!questionId || loading || !studentAnswer.trim()}
-              >
-                {loading ? "Checking..." : "Submit Answer"}
-              </button>
-              {feedback && (
-                <div className="text-sm font-medium text-gray-700 mt-2 p-2 bg-blue-50 rounded-md border-2 border-blue-200 whitespace-pre-wrap">
-                  {feedback}
+            {/* Solution Steps Section */}
+            <div>
+              <h4 className="text-sm font-semibold text-green-700 mb-2 flex items-center gap-1">
+                <CheckCircle className="w-4 h-4" />
+                Solution Steps:
+              </h4>
+              {solutionSteps && solutionSteps.length > 0 ? (
+                <ol className="list-decimal list-inside space-y-3 bg-green-50 p-4 rounded-md border-2 border-green-300 shadow-inner">
+                  {solutionSteps.map((s, i) => (
+                    <li key={i} className="text-gray-800 leading-relaxed whitespace-pre-wrap">{s}</li>
+                  ))}
+                </ol>
+              ) : (
+                <div className="p-4 rounded-md border-2 border-green-200 bg-green-50 text-green-600">
+                  Solution steps will appear here after clicking "Get Solution".
                 </div>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Answer Submission Card */}
+        <div className="bg-white border-2 border-indigo-300 shadow-lg rounded-xl p-5 flex flex-col overflow-hidden col-span-2">
+          <h3 className="text-lg font-semibold text-indigo-700 mb-3 flex items-center gap-2">
+            <CheckCircle className="w-5 h-5" />
+            Your Answer
+          </h3>
+          <div className="flex-1 overflow-auto">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Enter your answer:</label>
+            {choices && choices.length > 0 ? (
+              <div className="space-y-2">
+                {choices.map((choice, idx) => (
+                  <label
+                    key={idx}
+                    className="flex items-center p-2 border-2 border-gray-300 rounded-md hover:border-green-500 cursor-pointer"
+                  >
+                    <input
+                      type="radio"
+                      name="mcq-choice"
+                      value={choice}
+                      checked={selectedChoice === choice}
+                      onChange={(e) => setSelectedChoice(e.target.value)}
+                      className="mr-3"
+                    />
+                    <span className="text-gray-800">{choice}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={studentAnswer}
+                onChange={(e) => setStudentAnswer(e.target.value)}
+                placeholder="Enter answer (e.g. 3/8 or 0.375)"
+                className="border-2 border-gray-300 focus:border-green-500 p-2 w-full rounded-md mt-1 focus:outline-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    const btn = document.querySelector('#submit-answer-btn') as HTMLButtonElement | null;
+                    if (btn && !btn.disabled) btn.click();
+                  }
+                }}
+              />
+            )}
+
+            <div className="mt-3">
+              <button
+                onClick={submitAnswer}
+                id="submit-answer-btn"
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-md shadow-md disabled:opacity-50 text-sm"
+                disabled={!questionId || loading || (!studentAnswer.trim() && !selectedChoice)}
+              >
+                {loading ? "Checking..." : "Submit Answer"}
+              </button>
+            </div>
+
+            {feedback && (
+              <div className="text-sm font-medium text-gray-700 mt-3 p-3 bg-blue-50 rounded-md border-2 border-blue-200 whitespace-pre-wrap">
+                {feedback}
+              </div>
+            )}
           </div>
         </div>
       </div>
