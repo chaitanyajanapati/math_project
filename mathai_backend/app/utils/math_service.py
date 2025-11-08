@@ -22,10 +22,27 @@ else:
 
 from generate_math_question import generate_question, generate_hint, generate_solution
 
+try:
+    from progressive_hints import generate_progressive_hints
+    PROGRESSIVE_HINTS_AVAILABLE = True
+except ImportError:
+    PROGRESSIVE_HINTS_AVAILABLE = False
+    print("[MathAIService] Progressive hints module not available")
+
+try:
+    from solution_explainer import enhance_solution_steps
+    SOLUTION_EXPLAINER_AVAILABLE = True
+except ImportError:
+    SOLUTION_EXPLAINER_AVAILABLE = False
+    print("[MathAIService] Solution explainer module not available")
+
 class MathAIService:
     def __init__(self):
         # Initialize any AI model configurations here
-        pass
+        # Simple in-memory cache for progressive hints (deterministic, safe to cache)
+        self._hint_cache = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     # ------------------ Multiple Choice Support Helpers ------------------
     def generate_distractors(self, correct: str, topic: str, max_count: int = 3):
@@ -287,18 +304,68 @@ class MathAIService:
             print(f"Error in generate_question_only: {e}")
             return f"Sample {difficulty} {topic} question for grade {grade}: What is 2 + 2?"
 
-    def generate_hint_for_question(self, question_text: str, topic: str, model: str = "phi") -> str:
-        """Generate a hint for an existing question (on-demand)."""
+    def generate_hint_for_question(self, question_text: str, topic: str, model: str = "phi", hint_level: int = 1) -> str:
+        """Generate a hint for an existing question (on-demand).
+        
+        Args:
+            question_text: The question to generate hint for
+            topic: The topic (algebra, geometry, etc.)
+            model: LLM model to use (fallback if progressive hints fail)
+            hint_level: 1 (conceptual), 2 (strategic), or 3 (procedural)
+        
+        Returns:
+            Hint string appropriate for the requested level
+        """
+        # Try progressive hints first (deterministic, faster, better quality)
+        if PROGRESSIVE_HINTS_AVAILABLE:
+            try:
+                # Cache key for progressive hints (deterministic)
+                cache_key = f"{question_text}:{topic}:{hint_level}"
+                
+                if cache_key in self._hint_cache:
+                    self._cache_hits += 1
+                    return self._hint_cache[cache_key]
+                
+                self._cache_misses += 1
+                tier1, tier2, tier3 = generate_progressive_hints(question_text, topic)
+                hints_map = {1: tier1, 2: tier2, 3: tier3}
+                
+                # Cache all three tiers
+                for level, hint in hints_map.items():
+                    self._hint_cache[f"{question_text}:{topic}:{level}"] = hint
+                
+                return hints_map.get(hint_level, tier1)
+            except Exception as e:
+                print(f"Progressive hints failed: {e}, falling back to LLM")
+        
+        # Fallback to LLM-based hint generation (not cached due to variability)
         try:
             return generate_hint(question_text, topic, model)
         except Exception as e:
             print(f"Error generating hint: {e}")
             return "Think about the key concepts and formulas you know for this type of problem."
 
-    def generate_solution_for_question(self, question_text: str, topic: str, model: str = "phi") -> Tuple[str, List[str]]:
-        """Generate solution (answer, steps) for an existing question (on-demand)."""
+    def generate_solution_for_question(self, question_text: str, topic: str, model: str = "phi", enhanced: bool = False) -> Tuple[str, List]:
+        """Generate solution (answer, steps) for an existing question (on-demand).
+        
+        Args:
+            question_text: The question to solve
+            topic: Math topic
+            model: LLM model for fallback
+            enhanced: If True, return enhanced steps with explanations
+        
+        Returns:
+            (answer, steps) where steps is List[str] or List[Dict] if enhanced=True
+        """
         try:
-            return generate_solution(question_text, topic, model)
+            answer, steps = generate_solution(question_text, topic, model)
+            
+            if enhanced and SOLUTION_EXPLAINER_AVAILABLE and steps:
+                # Return enhanced solution with explanations
+                enhanced_steps = enhance_solution_steps(steps, question_text, topic)
+                return answer, enhanced_steps
+            
+            return answer, steps
         except Exception as e:
             print(f"Error generating solution: {e}")
             return "", []
@@ -481,22 +548,40 @@ class MathAIService:
         
         return is_correct, confidence, feedback, next_hint
     
-    def calculate_points(self, is_correct: bool, attempt_number: int, time_taken: float) -> int:
-        """Calculate points based on correctness, attempts, and time taken"""
+    def calculate_points(self, is_correct: bool, attempt_number: int, time_taken: float, difficulty: str = "medium") -> int:
+        """Calculate points based on correctness, attempts, time taken, and difficulty
+        
+        Points breakdown:
+        - Base: 100 (easy), 150 (medium), 200 (hard)
+        - Attempt penalty: -15 points per extra attempt
+        - Speed bonus: Up to +50 for very fast (under 30s), +30 for fast (30-60s)
+        - Speed penalty: -20 for slow (over 5 min), -30 for very slow (over 10 min)
+        """
         if not is_correct:
             return 0
             
-        # Base points for correct answer
-        base_points = 100
+        # Difficulty-based base points
+        difficulty_points = {
+            "easy": 100,
+            "medium": 150,
+            "hard": 200,
+        }
+        base_points = difficulty_points.get(difficulty, 150)
         
         # Deduct points for multiple attempts
-        attempt_penalty = (attempt_number - 1) * 10
+        attempt_penalty = (attempt_number - 1) * 15
         
-        # Time bonus/penalty (adjust thresholds as needed)
+        # Speed bonus/penalty (more generous rewards for fast solving)
         time_points = 0
-        if time_taken < 60:  # Fast solution
-            time_points = 20
-        elif time_taken > 300:  # Took too long
+        if time_taken < 30:  # Lightning fast
+            time_points = 50
+        elif time_taken < 60:  # Fast solution
+            time_points = 30
+        elif time_taken < 120:  # Good speed
+            time_points = 10
+        elif time_taken > 600:  # Very slow (>10 min)
+            time_points = -30
+        elif time_taken > 300:  # Slow (>5 min)
             time_points = -20
             
         final_points = base_points - attempt_penalty + time_points

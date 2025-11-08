@@ -25,7 +25,7 @@ async def generate_question_api(
     db: SimpleDB = Depends(get_db)
 ):
     """Generate a math question only. Hints and solutions are generated on-demand via separate endpoints."""
-    print(f"Received question request: grade={req.grade}, difficulty={req.difficulty}, topic={req.topic}")
+    print(f"Received question request: grade={req.grade}, difficulty={req.difficulty}, topic={req.topic}, question_type={req.question_type}")
     try:
         question_text = math_service.generate_question_only(req.grade, req.difficulty, req.topic)
 
@@ -72,25 +72,40 @@ async def generate_question_api(
 @router.post("/questions/{question_id}/hint")
 async def generate_hint_api(
     question_id: str,
+    hint_level: int = 1,  # 1=conceptual, 2=strategic, 3=procedural
     math_service: MathAIService = Depends(get_math_service),
     db: SimpleDB = Depends(get_db)
 ):
-    """Generate a hint for a stored question on-demand."""
+    """Generate a progressive hint for a stored question on-demand.
+    
+    Hint levels:
+    - 1 (Conceptual): What concept/formula to use
+    - 2 (Strategic): What approach/strategy to take
+    - 3 (Procedural): Specific first step
+    
+    Each level reveals more information. Cost: -10 points per hint level used.
+    """
     try:
         q = db.get_question(question_id)
         if not q:
             raise HTTPException(status_code=404, detail="Question not found")
 
-        hint = math_service.generate_hint_for_question(q.question, q.topic)
+        # Clamp hint_level to valid range
+        hint_level = max(1, min(3, hint_level))
 
-        # Persist hint to DB
-        q.hints = [hint]
+        hint = math_service.generate_hint_for_question(q.question, q.topic, hint_level=hint_level)
+
+        # Store all hints for tracking (append if multiple levels requested)
+        if not q.hints:
+            q.hints = []
+        if hint not in q.hints:
+            q.hints.append(hint)
         try:
             db.save_question(q)
         except Exception as db_error:
             print(f"Warning: Could not update question with hint: {db_error}")
 
-        return {"hint": hint}
+        return {"hint": hint, "hint_level": hint_level, "points_penalty": hint_level * 10}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -181,7 +196,8 @@ async def submit_answer(
         points = math_service.calculate_points(
             is_correct, 
             submission.attempt_number,
-            time_taken
+            time_taken,
+            question.difficulty
         )
         
         # Update student progress

@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../config";
 import { Sparkles, Lightbulb, CheckCircle, BookOpen, Settings2, Target } from "lucide-react";
+import MathRenderer from "../components/MathRenderer";
+import Timer from "../components/Timer";
+import GeometryVisualizer from "../components/GeometryVisualizer";
 
 export default function QuestionGenerator() {
   const [grade, setGrade] = useState<number>(8);
@@ -21,6 +24,10 @@ export default function QuestionGenerator() {
   const [generating, setGenerating] = useState<boolean>(false);
   const [loadingHint, setLoadingHint] = useState<boolean>(false);
   const [loadingSolution, setLoadingSolution] = useState<boolean>(false);
+  const [timedMode, setTimedMode] = useState<boolean>(false);
+  const [timeSpent, setTimeSpent] = useState<number>(0);
+  const [hintLevel, setHintLevel] = useState<number>(0); // 0=none, 1=conceptual, 2=strategic, 3=procedural
+  const [allHints, setAllHints] = useState<string[]>([]); // Store all hints received
 
   // Abort controller ref to cancel stale generate requests when user switches topic rapidly
   const abortRef = useRef<AbortController | null>(null);
@@ -45,15 +52,32 @@ export default function QuestionGenerator() {
         },
         { signal: controller.signal }
       );
+      console.log("Generate response:", res.data);
+      console.log("Question type was:", questionType);
+      console.log("Raw choices from response:", res.data.choices);
+      console.log("Is array?", Array.isArray(res.data.choices));
+      
       setQuestion(res.data.question);
       setQuestionId(res.data.id || "");
-      setChoices(Array.isArray(res.data.choices) ? res.data.choices : null);
+      
+      // Ensure choices are properly set for MCQ questions
+      const receivedChoices = res.data.choices;
+      if (Array.isArray(receivedChoices) && receivedChoices.length > 0) {
+        console.log("Setting choices to:", receivedChoices);
+        setChoices(receivedChoices);
+      } else {
+        console.log("No valid choices received, setting to null");
+        setChoices(null);
+      }
+      
       setSelectedChoice("");
       setHint("");
       setSolutionSteps([]);
       setFeedback("");
       setStudentAnswer("");
       setAttemptNumber(1);
+      setHintLevel(0);
+      setAllHints([]);
     } catch (err: unknown) {
       if (axios.isCancel(err) || (err instanceof Error && err.name === 'CanceledError')) {
         // Silently ignore canceled requests
@@ -77,6 +101,8 @@ export default function QuestionGenerator() {
     setFeedback("");
     setStudentAnswer("");
     setAttemptNumber(1);
+    setHintLevel(0);
+    setAllHints([]);
     // Also cancel any in-flight generation tied to old topic
     if (abortRef.current) {
       abortRef.current.abort();
@@ -85,10 +111,18 @@ export default function QuestionGenerator() {
 
   const fetchHint = async () => {
     if (!questionId) return;
+    const nextLevel = hintLevel + 1;
+    if (nextLevel > 3) return; // Max 3 hint levels
+
     setLoadingHint(true);
     try {
-      const r = await axios.post(API_ENDPOINTS.HINT(questionId));
-      setHint(r.data.hint || "");
+      const r = await axios.post(API_ENDPOINTS.HINT(questionId), null, {
+        params: { hint_level: nextLevel }
+      });
+      const newHint = r.data.hint || "";
+      setHint(newHint);
+      setHintLevel(nextLevel);
+      setAllHints(prev => [...prev, newHint]);
     } catch (e) {
       console.error(e);
       setHint("Could not fetch hint.");
@@ -98,14 +132,27 @@ export default function QuestionGenerator() {
   };
 
   const fetchSolution = async () => {
-    if (!questionId) return;
+    if (!questionId) {
+      console.warn("Cannot fetch solution: questionId is missing");
+      return;
+    }
     setLoadingSolution(true);
     try {
+      console.log("Fetching solution for question:", questionId);
       const r = await axios.post(API_ENDPOINTS.SOLUTION(questionId));
-      setSolutionSteps(r.data.solution_steps || []);
+      console.log("Solution response:", r.data);
+      
+      const steps = r.data.solution_steps || [];
+      if (steps.length === 0) {
+        console.warn("Solution response contained no steps");
+        setSolutionSteps(["No solution steps available."]);
+      } else {
+        console.log(`Setting ${steps.length} solution steps`);
+        setSolutionSteps(steps);
+      }
     } catch (e) {
-      console.error(e);
-      setSolutionSteps(["Could not fetch solution."]);
+      console.error("Error fetching solution:", e);
+      setSolutionSteps(["Could not fetch solution. Error: " + (e instanceof Error ? e.message : String(e))]);
     } finally {
       setLoadingSolution(false);
     }
@@ -137,11 +184,31 @@ export default function QuestionGenerator() {
   };
 
   return (
-    <div className="h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 p-6 overflow-hidden flex flex-col">
-      <h1 className="text-3xl font-bold mb-6 text-blue-700 text-center flex items-center justify-center gap-2">
-        <Target className="w-8 h-8" />
-        Math AI Question Generator
-      </h1>
+    <div className="bg-linear-to-br from-blue-50 via-indigo-50 to-purple-50 p-6 min-h-[calc(100vh-64px)] flex flex-col">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-3xl font-bold text-blue-700 flex items-center gap-2">
+          <Target className="w-8 h-8" />
+          Question Generator
+        </h1>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={timedMode}
+              onChange={(e) => setTimedMode(e.target.checked)}
+              className="w-4 h-4 accent-blue-600"
+            />
+            <span className="text-sm font-medium text-gray-700">Timed Mode</span>
+          </label>
+          {timedMode && question && (
+            <Timer 
+              mode="stopwatch" 
+              autoStart={true}
+              onTimeUpdate={(seconds) => setTimeSpent(seconds)}
+            />
+          )}
+        </div>
+      </div>
 
       <div className="grid grid-cols-4 gap-4 w-full max-w-6xl mx-auto flex-1 overflow-hidden">
         {/* Left: Controls */}
@@ -214,7 +281,10 @@ export default function QuestionGenerator() {
           <div className="mt-3 overflow-auto flex-1">
             <div className="p-3 bg-yellow-50 rounded-md border-2 border-yellow-300 min-h-[100px]">
               {question ? (
-                <p className="text-gray-800 text-lg whitespace-pre-wrap">{question}</p>
+                <>
+                  <MathRenderer content={question} className="text-gray-800 text-lg whitespace-pre-wrap mb-4" />
+                  {topic === 'geometry' && <GeometryVisualizer question={question} className="mt-4" />}
+                </>
               ) : (
                 <p className="text-gray-400">No question yet. Click "Generate Question" to begin.</p>
               )}
@@ -231,12 +301,17 @@ export default function QuestionGenerator() {
           <div className="mb-3 flex items-center gap-2">
             <button
               onClick={fetchHint}
-              disabled={loadingHint || !questionId}
+              disabled={loadingHint || !questionId || hintLevel >= 3}
               className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Lightbulb className={`w-4 h-4 ${loadingHint ? 'animate-spin' : ''}`} />
-              {loadingHint ? "Loading..." : "Get Hint"}
+              {loadingHint ? "Loading..." : hintLevel === 0 ? "Get Hint" : `Next Hint (${hintLevel}/3)`}
             </button>
+            {hintLevel > 0 && (
+              <span className="text-xs text-gray-600 bg-yellow-100 px-2 py-1 rounded">
+                -{hintLevel * 10} pts used
+              </span>
+            )}
             <button
               onClick={fetchSolution}
               disabled={loadingSolution || !questionId}
@@ -248,15 +323,26 @@ export default function QuestionGenerator() {
           </div>
           <div className="flex-1 overflow-y-auto">
             {/* Hint Section */}
-            {hint && (
-              <div className="mb-4">
+            {allHints.length > 0 && (
+              <div className="mb-4 space-y-3">
                 <h4 className="text-sm font-semibold text-indigo-700 mb-2 flex items-center gap-1">
                   <Lightbulb className="w-4 h-4" />
-                  Hint:
+                  Hints ({allHints.length}/3):
                 </h4>
-                <div className="p-4 bg-indigo-50 rounded-md border-2 border-indigo-200 text-indigo-900 whitespace-pre-wrap">
-                  {hint}
-                </div>
+                {allHints.map((h, idx) => (
+                  <div key={idx} className={`p-3 rounded-md border-2 ${
+                    idx === 0 ? 'bg-blue-50 border-blue-200' :
+                    idx === 1 ? 'bg-indigo-50 border-indigo-200' :
+                    'bg-purple-50 border-purple-200'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      <span className="text-xs font-bold text-gray-600 mt-0.5">
+                        {idx === 0 ? '💡' : idx === 1 ? '📋' : '🔧'}
+                      </span>
+                      <MathRenderer content={h} className="text-sm flex-1" />
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -267,11 +353,13 @@ export default function QuestionGenerator() {
                 Solution Steps:
               </h4>
               {solutionSteps && solutionSteps.length > 0 ? (
-                <ol className="list-decimal list-inside space-y-3 bg-green-50 p-4 rounded-md border-2 border-green-300 shadow-inner">
+                <div className="space-y-3 bg-green-50 p-4 rounded-md border-2 border-green-300 shadow-inner">
                   {solutionSteps.map((s, i) => (
-                    <li key={i} className="text-gray-800 leading-relaxed whitespace-pre-wrap">{s}</li>
+                    <div key={i} className="text-gray-800 leading-relaxed">
+                      <MathRenderer content={s} className="inline whitespace-pre-wrap" />
+                    </div>
                   ))}
-                </ol>
+                </div>
               ) : (
                 <div className="p-4 rounded-md border-2 border-green-200 bg-green-50 text-green-600">
                   Solution steps will appear here after clicking "Get Solution".
@@ -288,7 +376,14 @@ export default function QuestionGenerator() {
             Your Answer
           </h3>
           <div className="flex-1 overflow-auto">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Enter your answer:</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Enter your answer:
+              {questionType === "mcq" && (
+                <span className="ml-2 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                  MCQ Mode {choices && choices.length > 0 ? `(${choices.length} options)` : '(Loading...)'}
+                </span>
+              )}
+            </label>
             {choices && choices.length > 0 ? (
               <div className="space-y-2">
                 {choices.map((choice, idx) => (
@@ -304,9 +399,14 @@ export default function QuestionGenerator() {
                       onChange={(e) => setSelectedChoice(e.target.value)}
                       className="mr-3"
                     />
-                    <span className="text-gray-800">{choice}</span>
+                    <MathRenderer content={choice} className="text-gray-800" />
                   </label>
                 ))}
+              </div>
+            ) : questionType === "mcq" && question ? (
+              <div className="p-4 bg-yellow-50 border-2 border-yellow-300 rounded-md text-yellow-700">
+                <p className="text-sm font-medium">⚠️ Multiple choice options not loaded.</p>
+                <p className="text-xs mt-1">Try generating a new question or check the console for errors.</p>
               </div>
             ) : (
               <input
@@ -337,8 +437,8 @@ export default function QuestionGenerator() {
             </div>
 
             {feedback && (
-              <div className="text-sm font-medium text-gray-700 mt-3 p-3 bg-blue-50 rounded-md border-2 border-blue-200 whitespace-pre-wrap">
-                {feedback}
+              <div className="text-sm font-medium text-gray-700 mt-3 p-3 bg-blue-50 rounded-md border-2 border-blue-200">
+                <MathRenderer content={feedback} className="whitespace-pre-wrap" />
               </div>
             )}
           </div>
