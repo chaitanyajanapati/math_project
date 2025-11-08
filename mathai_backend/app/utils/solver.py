@@ -301,7 +301,7 @@ def solve_question(question: str, topic: str) -> Optional[Tuple[str, List[str]]]
         if result:
             return result
     
-    if topic in ("geometry", "mensuration"):
+    if topic in ("geometry",):
         result = solve_geometry_area(question)
         if result:
             return result

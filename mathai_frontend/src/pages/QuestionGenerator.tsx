@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../config";
 import { Sparkles, Lightbulb, CheckCircle, BookOpen, Settings2, Target } from "lucide-react";
@@ -19,14 +19,28 @@ export default function QuestionGenerator() {
   const [loadingHint, setLoadingHint] = useState<boolean>(false);
   const [loadingSolution, setLoadingSolution] = useState<boolean>(false);
 
+  // Abort controller ref to cancel stale generate requests when user switches topic rapidly
+  const abortRef = useRef<AbortController | null>(null);
+
   const handleGenerate = async () => {
+    // Cancel any previous in-flight request
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setGenerating(true);
     try {
-      const res = await axios.post(API_ENDPOINTS.GENERATE_QUESTION, {
-        grade,
-        difficulty,
-        topic,
-      });
+      const res = await axios.post(
+        API_ENDPOINTS.GENERATE_QUESTION,
+        {
+          grade,
+          difficulty,
+          topic,
+        },
+        { signal: controller.signal }
+      );
       setQuestion(res.data.question);
       setQuestionId(res.data.id || "");
       setHint("");
@@ -34,13 +48,32 @@ export default function QuestionGenerator() {
       setFeedback("");
       setStudentAnswer("");
       setAttemptNumber(1);
-    } catch (err) {
+    } catch (err: unknown) {
+      if (axios.isCancel(err) || (err instanceof Error && err.name === 'CanceledError')) {
+        // Silently ignore canceled requests
+        return;
+      }
       setQuestion("Error connecting to backend. Make sure FastAPI is running.");
       console.error(err);
     } finally {
       setGenerating(false);
     }
   };
+
+  // Clear existing question context when topic changes so the UI never shows stale question for a new topic
+  useEffect(() => {
+    setQuestion("");
+    setQuestionId("");
+    setHint("");
+    setSolutionSteps([]);
+    setFeedback("");
+    setStudentAnswer("");
+    setAttemptNumber(1);
+    // Also cancel any in-flight generation tied to old topic
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+  }, [topic]);
 
   const fetchHint = async () => {
     if (!questionId) return;
@@ -137,8 +170,11 @@ export default function QuestionGenerator() {
               <option value="algebra">Algebra</option>
               <option value="geometry">Geometry</option>
               <option value="arithmetic">Arithmetic</option>
-              <option value="mensuration">Mensuration</option>
+              <option value="statistics">Statistics</option>
+              <option value="probability">Probability</option>
               <option value="trigonometry">Trigonometry</option>
+              <option value="number_theory">Number Theory</option>
+              <option value="calculus">Calculus</option>
             </select>
         </div>
 

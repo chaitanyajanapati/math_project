@@ -55,41 +55,6 @@ except Exception:  # noqa: broad-except – fall back to alternative resolutions
         # Final fallback: leave solve_question as None
         solve_question = None  # type: ignore
 
-# Import expanded templates with all new topics
-try:
-    from expanded_templates import EXPANDED_TEMPLATES
-    print("[generate_math_question] Using EXPANDED_TEMPLATES with all topics")
-except ImportError:
-    print("[generate_math_question] WARNING: Could not import EXPANDED_TEMPLATES, using fallback")
-    EXPANDED_TEMPLATES = None
-
-# Import quality improvement modules
-try:
-    from smart_numbers import SmartNumberGenerator
-    smart_number_gen = SmartNumberGenerator()
-    print("[generate_math_question] SmartNumberGenerator loaded")
-except ImportError:
-    print("[generate_math_question] WARNING: Could not import SmartNumberGenerator")
-    smart_number_gen = None
-
-try:
-    from question_validator import QuestionValidator, QuestionQualityScorer
-    question_validator = QuestionValidator()
-    quality_scorer = QuestionQualityScorer()
-    print("[generate_math_question] QuestionValidator and QuestionQualityScorer loaded")
-except ImportError:
-    print("[generate_math_question] WARNING: Could not import validation modules")
-    question_validator = None
-    quality_scorer = None
-
-try:
-    from complexity_scorer import ComplexityScorer
-    complexity_scorer = ComplexityScorer()
-    print("[generate_math_question] ComplexityScorer loaded")
-except ImportError:
-    print("[generate_math_question] WARNING: Could not import ComplexityScorer")
-    complexity_scorer = None
-
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -226,12 +191,9 @@ TEMPLATES = {
 # Helpers
 # ---------------------------------------------------------------------------
 def _pick_template(topic: str, difficulty: str, grade: int) -> Optional[str]:
-    # Use EXPANDED_TEMPLATES if available, otherwise fallback to old TEMPLATES
-    template_source = EXPANDED_TEMPLATES if EXPANDED_TEMPLATES is not None else TEMPLATES
-    
-    if topic not in template_source or difficulty not in template_source[topic]:
+    if topic not in TEMPLATES or difficulty not in TEMPLATES[topic]:
         return None
-    band = template_source[topic][difficulty]
+    band = TEMPLATES[topic][difficulty]
     for (g_min, g_max), templates in band.items():
         if g_min <= grade <= g_max:
             return random.choice(templates)
@@ -242,10 +204,9 @@ def _pick_template(topic: str, difficulty: str, grade: int) -> Optional[str]:
     return None
 
 
-def generate_variation_from_template(template: str, grade: int, topic: str = "arithmetic", difficulty: str = "medium") -> str:
-    """Replace each NUM token or {a}, {b}, {c} placeholders with grade-scaled numbers; keep structure stable."""
-    
-    # Fallback to simple random generation (smart generation has method signature issues)
+def generate_variation_from_template(template: str, grade: int) -> str:
+    """Replace each NUM token with grade-scaled numbers; keep structure stable."""
+    # Determine numeric range by grade band
     if grade <= 5:
         low, high = 5, 40
     elif grade <= 9:
@@ -261,9 +222,8 @@ def generate_variation_from_template(template: str, grade: int, topic: str = "ar
             return f"{round(val * random.uniform(0.3,1.2), 2)}"
         return str(val)
 
-    # Replace tokens: both NUM (old format) and {a}, {b}, {c}, etc. (new format)
+    # Replace tokens
     out = re.sub(r"NUM", repl, template)
-    out = re.sub(r"\{[a-z]\}", repl, out)
     # Basic cleanup of duplicate spaces
     return re.sub(r"\s+", " ", out).strip()
 
@@ -307,8 +267,8 @@ def _call_ollama(prompt: str, model: str, timeout: int) -> Optional[str]:
         return None
 
 
-def generate_question(grade: int, difficulty: str, topic: str, model: str = "phi", force_ai: bool = False, max_attempts: int = 5) -> Tuple[str, str, str, List[str]]:
-    """Generate a single math question with validation and complexity checking.
+def generate_question(grade: int, difficulty: str, topic: str, model: str = "phi", force_ai: bool = False) -> Tuple[str, str, str, List[str]]:
+    """Generate a single math question.
 
     Parameters:
         grade: int student grade level (1-12 typical)
@@ -316,61 +276,34 @@ def generate_question(grade: int, difficulty: str, topic: str, model: str = "phi
         topic: str topic key (algebra, geometry, arithmetic, ...)
         model: str ollama model name
         force_ai: bool if True, bypass template probability and attempt AI first
-        max_attempts: int maximum attempts to generate a valid question
 
     Returns a tuple of (question, answer, hint, steps) with only question
     populated here (other values kept for backward compatibility with older
     callers expecting the previous signature.)
     """
-    
-    for attempt in range(max_attempts):
-        template = _pick_template(topic, difficulty, grade)
+    template = _pick_template(topic, difficulty, grade)
 
-        # Decide path: AI first if forced OR random exceeds template rate.
-        attempt_ai = force_ai or (template is not None and random.random() >= ModelConfig.TEMPLATE_RATE)
+    # Decide path: AI first if forced OR random exceeds template rate.
+    attempt_ai = force_ai or (template is not None and random.random() >= ModelConfig.TEMPLATE_RATE)
 
-        question = None
-        source = None
+    if attempt_ai:
+        prompt = PromptTemplates.question_prompt(grade, difficulty, topic, topic)
+        raw = _call_ollama(prompt, model, timeout=ModelConfig.INITIAL_TIMEOUT)
+        if raw:
+            cleaned = clean_question(raw)
+            if len(cleaned) >= 8:
+                print("[question-gen] SOURCE: LLM")
+                return cleaned, "", "", []
+        # If AI path failed or yielded unusable text, fall back to template below
 
-        if attempt_ai:
-            prompt = PromptTemplates.question_prompt(grade, difficulty, topic, topic)
-            raw = _call_ollama(prompt, model, timeout=ModelConfig.INITIAL_TIMEOUT)
-            if raw:
-                cleaned = clean_question(raw)
-                if len(cleaned) >= 8:
-                    question = cleaned
-                    source = "LLM"
-
-        # Fall back to template if AI failed or wasn't attempted
-        if question is None:
-            if template:
-                question = generate_variation_from_template(template, grade, topic, difficulty)
-                source = "TEMPLATE"
-            else:
-                # ultimate fallback static
-                question = generate_variation_from_template("Solve for x: 3x + 7 = 22", grade, "algebra", difficulty)
-                source = "FALLBACK"
-
-        # Validate the question if validator is available (simplified - only check critical issues)
-        if question_validator is not None and complexity_scorer is not None:
-            try:
-                # Just use complexity scoring for now - validation is too strict without answers
-                complexity_result = complexity_scorer.calculate_complexity(question, topic)
-                complexity_score = complexity_result['score']
-                complexity_level = complexity_result['level']
-                assessment = complexity_scorer.match_difficulty_to_grade(complexity_score, grade)
-                
-                print(f"[question-gen] SOURCE: {source} | Complexity: {complexity_score} ({complexity_level}) | Grade Assessment: {assessment}")
-            except Exception as e:
-                print(f"[question-gen] Scoring error: {e}")
-                print(f"[question-gen] SOURCE: {source}")
-        else:
-            print(f"[question-gen] SOURCE: {source}")
-
-        return question, "", "", []
-
-    # Should never reach here, but just in case
-    return "Solve for x: 2x + 5 = 15", "", "", []
+    if template:
+        question = generate_variation_from_template(template, grade)
+        print("[question-gen] SOURCE: TEMPLATE")
+    else:
+        # ultimate fallback static
+        question = generate_variation_from_template("Solve for x: 3x + 7 = 22", grade)
+        print("[question-gen] SOURCE: FALLBACK")
+    return question, "", "", []
 
 
 # ---------------------------------------------------------------------------
@@ -381,11 +314,8 @@ def get_generic_hint(topic: str, question: str) -> str:
         "algebra": "Isolate the variable step by step.",
         "geometry": "Recall the appropriate formula for this shape.",
         "arithmetic": "Break the calculation into simpler parts.",
-        "trigonometry": "Use fundamental trig identities and ratios (SOH-CAH-TOA).",
-        "statistics": "Identify what measure is being asked (mean, median, mode, etc.).",
-        "probability": "Consider the total possible outcomes and favorable outcomes.",
-        "number_theory": "Think about factors, multiples, or divisibility rules.",
-        "calculus": "Apply the appropriate rule (power, chain, product, etc.).",
+        "trigonometry": "Use fundamental trig identities.",
+        "statistics": "Identify what measure is being asked (mean, median, etc.).",
     }
     return base.get(topic, "Identify the key operation or relationship.")
 
