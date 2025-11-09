@@ -2,6 +2,8 @@ from typing import Dict, List, Optional
 import json
 from pathlib import Path
 from datetime import datetime
+from functools import lru_cache
+import threading
 from app.models.questions import QuestionResponse, StudentProgress
 
 class SimpleDB:
@@ -12,11 +14,21 @@ class SimpleDB:
         self.progress_file = self.db_dir / "progress.json"
         self._init_db()
         
+        # Performance: Add in-memory cache
+        self._questions_cache = {}
+        self._cache_lock = threading.Lock()
+        self._load_cache()
+        
     def _init_db(self):
         if not self.questions_file.exists():
             self.questions_file.write_text("{}")
         if not self.progress_file.exists():
             self.progress_file.write_text("{}")
+    
+    def _load_cache(self):
+        """Load all questions into memory cache for faster reads"""
+        with self._cache_lock:
+            self._questions_cache = self._read_json(self.questions_file)
     
     def save_question(self, question: QuestionResponse):
         questions = self._read_json(self.questions_file)
@@ -33,11 +45,24 @@ class SimpleDB:
 
         questions[question.id] = _convert(qdict)
         self._write_json(self.questions_file, questions)
+        
+        # Update cache
+        with self._cache_lock:
+            self._questions_cache[question.id] = questions[question.id]
+        
         return question.id
     
     def get_question(self, question_id: str) -> Optional[QuestionResponse]:
+        # Performance: Read from cache first
+        with self._cache_lock:
+            if question_id in self._questions_cache:
+                return QuestionResponse(**self._questions_cache[question_id])
+        
+        # Fallback to disk read
         questions = self._read_json(self.questions_file)
         if question_id in questions:
+            with self._cache_lock:
+                self._questions_cache[question_id] = questions[question_id]
             return QuestionResponse(**questions[question_id])
         return None
     

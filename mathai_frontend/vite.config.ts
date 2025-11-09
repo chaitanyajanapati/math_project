@@ -76,4 +76,31 @@ export default defineConfig({
       }
     })
   ],
+  build: {
+    // Performance optimizations
+    target: 'esnext',
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true, // Remove console.log in production
+        drop_debugger: true
+      }
+    },
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-math': ['katex'],
+          'vendor-icons': ['lucide-react']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1000,
+    sourcemap: false // Disable source maps for smaller build
+  },
+  server: {
+    hmr: {
+      overlay: false // Reduce dev server overhead
+    }
+  }
 })

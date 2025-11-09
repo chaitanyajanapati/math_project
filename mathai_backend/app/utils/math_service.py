@@ -579,20 +579,17 @@ class MathAIService:
         base_points = difficulty_points.get(difficulty, 150)
         
         # Deduct points for multiple attempts
-        attempt_penalty = (attempt_number - 1) * 15
-        
-        # Speed bonus/penalty (more generous rewards for fast solving)
+        attempt_penalty = 15 * max(0, attempt_number - 1)
         time_points = 0
-        if time_taken < 30:  # Lightning fast
+        if time_taken < 30:
             time_points = 50
-        elif time_taken < 60:  # Fast solution
+        elif time_taken < 60:
             time_points = 30
-        elif time_taken < 120:  # Good speed
+        elif time_taken < 120:
             time_points = 10
-        elif time_taken > 600:  # Very slow (>10 min)
+        elif time_taken > 600:
             time_points = -30
-        elif time_taken > 300:  # Slow (>5 min)
+        elif time_taken > 300:
             time_points = -20
-            
         final_points = base_points - attempt_penalty + time_points
         return max(final_points, 10)  # Ensure minimum points for correct answer

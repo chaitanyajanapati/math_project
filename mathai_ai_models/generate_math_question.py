@@ -226,19 +226,40 @@ TEMPLATES = {
 # Helpers
 # ---------------------------------------------------------------------------
 def _pick_template(topic: str, difficulty: str, grade: int) -> Optional[str]:
-    # Use EXPANDED_TEMPLATES if available, otherwise fallback to old TEMPLATES
+    # Always use expanded templates for best variety and complexity
     template_source = EXPANDED_TEMPLATES if EXPANDED_TEMPLATES is not None else TEMPLATES
-    
+
     if topic not in template_source or difficulty not in template_source[topic]:
         return None
     band = template_source[topic][difficulty]
-    for (g_min, g_max), templates in band.items():
+
+    # For hard difficulty, filter for templates with complex structure
+    def is_structurally_hard(template: str, topic: str) -> bool:
+        keywords = {
+            "algebra": ["system", "quadratic", "factor", "absolute value", "optimization", "mixture", "exponent", "logarithm"],
+            "arithmetic": ["fraction", "%", "rate", "multi-step", "mixture", "percent", "ratio"],
+            "geometry": ["composite", "volume", "surface area", "multi-step", "hemisphere", "inscribed", "distance"],
+        }
+        topic_keywords = keywords.get(topic, [])
+        return any(k in template.lower() for k in topic_keywords) or ("system" in template.lower() or "quadratic" in template.lower())
+
+    templates = []
+    for (g_min, g_max), tlist in band.items():
         if g_min <= grade <= g_max:
-            return random.choice(templates)
+            if difficulty == "hard":
+                filtered = [t for t in tlist if is_structurally_hard(t, topic)]
+                if filtered:
+                    templates.extend(filtered)
+                else:
+                    templates.extend(tlist)
+            else:
+                templates.extend(tlist)
     # fallback any list
-    for _, templates in band.items():
-        if templates:
-            return random.choice(templates)
+    if not templates:
+        for _, tlist in band.items():
+            templates.extend(tlist)
+    if templates:
+        return random.choice(templates)
     return None
 
 
@@ -446,7 +467,14 @@ def generate_solution(question: str, topic: str, model: str = "phi") -> Tuple[st
     prompt = PromptTemplates.solution_prompt(question, topic)
     raw = _call_ollama(prompt, model, timeout=15)
     if not raw:
-        return "", []
+        # If LLM fails, return generic steps
+        generic_steps = [
+            "Read the question carefully.",
+            "Apply the appropriate formula or method.",
+            "Calculate step by step.",
+            "Check your answer."
+        ]
+        return "", [f"{i+1}. {s}" for i, s in enumerate(generic_steps)]
 
     answer = ""
     steps: List[str] = []
@@ -463,6 +491,16 @@ def generate_solution(question: str, topic: str, model: str = "phi") -> Tuple[st
             answer = nums[-1]
 
     steps = [f"{i+1}. {s}" for i, s in enumerate(steps)]
+    # Pad steps to minimum 4 points if too short
+    if len(steps) < 4:
+        generic_steps = [
+            "Read the question carefully.",
+            "Apply the appropriate formula or method.",
+            "Calculate step by step.",
+            "Check your answer."
+        ]
+        for i in range(len(steps), 4):
+            steps.append(f"{i+1}. {generic_steps[i]}")
     return answer.strip(), steps
 
 

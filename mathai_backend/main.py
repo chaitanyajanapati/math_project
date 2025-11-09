@@ -1,8 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from app.routers import ai_router
 
-app = FastAPI(title="MathAI Backend")
+app = FastAPI(
+    title="MathAI Backend",
+    docs_url="/docs",
+    redoc_url=None,  # Disable ReDoc to reduce overhead
+)
+
+# --- Performance: Enable Gzip compression ---
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # --- Enable CORS for frontend ---
 app.add_middleware(
