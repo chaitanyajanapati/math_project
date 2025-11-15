@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from datetime import datetime
 import time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import json
 from pathlib import Path
+from starlette.concurrency import run_in_threadpool
 
 from app.models.questions import (
     QuestionRequest, QuestionResponse, AnswerSubmission,
@@ -11,6 +12,9 @@ from app.models.questions import (
 )
 from app.utils.math_service import MathAIService
 from app.utils.db import SimpleDB
+from app.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -28,24 +32,47 @@ async def generate_question_api(
     db: SimpleDB = Depends(get_db)
 ):
     """Generate a math question only. Hints and solutions are generated on-demand via separate endpoints."""
-    print(f"Received question request: grade={req.grade}, difficulty={req.difficulty}, topic={req.topic}, question_type={req.question_type}")
+    logger.info(
+        "Received question request",
+        extra={
+            "grade": req.grade,
+            "difficulty": req.difficulty.value,
+            "topic": req.topic.value,
+            "question_type": req.question_type.value
+        }
+    )
     try:
-        question_text = math_service.generate_question_only(req.grade, req.difficulty, req.topic)
+        # Use threadpool for CPU-bound question generation
+        question_text = await run_in_threadpool(
+            math_service.generate_question_only,
+            req.grade,
+            req.difficulty.value,
+            req.topic.value
+        )
 
-        # Always generate solution (needed for validation and display after correct answer)
-        answer, solution_steps = math_service.generate_solution_for_question(question_text, req.topic)
+        # Generate solution (CPU-bound)
+        answer, solution_steps = await run_in_threadpool(
+            math_service.generate_solution_for_question,
+            question_text,
+            req.topic.value
+        )
         
         # For MCQ, also generate distractors
         all_choices = None
-        if req.question_type == "mcq":
-            distractors = math_service.generate_distractors(answer, req.topic) if answer else []
-            all_choices = math_service.mix_choices(answer, distractors) if answer else None
+        if req.question_type.value == "mcq":
+            if answer:
+                distractors = await run_in_threadpool(
+                    math_service.generate_distractors,
+                    answer,
+                    req.topic.value
+                )
+                all_choices = math_service.mix_choices(answer, distractors)
 
         question_response = QuestionResponse(
             question=question_text,
             grade=req.grade,
-            difficulty=req.difficulty,
-            topic=req.topic,
+            difficulty=req.difficulty.value,
+            topic=req.topic.value,
             correct_answer=answer or "",
             normalized_answers=math_service.normalize_answer(answer) if answer else [],
             choices=all_choices,
@@ -53,12 +80,19 @@ async def generate_question_api(
             solution_steps=solution_steps or []
         )
 
-        print(f"Created question response with question: {question_text} | type={req.question_type} | choices={all_choices} | steps={len(solution_steps) if solution_steps else 0}")
+        logger.info(
+            "Generated question",
+            extra={
+                "question_type": req.question_type.value,
+                "has_choices": all_choices is not None,
+                "num_steps": len(solution_steps) if solution_steps else 0
+            }
+        )
 
         try:
             db.save_question(question_response)
         except Exception as db_error:
-            print(f"Warning: Could not save question to database: {str(db_error)}")
+            logger.warning("Could not save question to database", extra={"error": str(db_error)})
 
         # Hide correct_answer, normalized_answers, and solution_steps before returning to frontend
         safe_response = question_response.model_copy()
@@ -68,7 +102,7 @@ async def generate_question_api(
         return safe_response
 
     except Exception as e:
-        print(f"Error in generate_question_api: {str(e)}")
+        logger.error("Error in generate_question_api", extra={"error": str(e)}, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -96,7 +130,13 @@ async def generate_hint_api(
         # Clamp hint_level to valid range
         hint_level = max(1, min(3, hint_level))
 
-        hint = math_service.generate_hint_for_question(q.question, q.topic, hint_level=hint_level)
+        # Use threadpool for CPU-bound hint generation
+        hint = await run_in_threadpool(
+            math_service.generate_hint_for_question,
+            q.question,
+            q.topic,
+            hint_level=hint_level
+        )
 
         # Store all hints for tracking (append if multiple levels requested)
         if not q.hints:
@@ -106,11 +146,13 @@ async def generate_hint_api(
         try:
             db.save_question(q)
         except Exception as db_error:
-            print(f"Warning: Could not update question with hint: {db_error}")
+            logger.warning("Could not update question with hint", extra={"error": str(db_error)})
 
+        logger.info("Generated hint", extra={"question_id": question_id, "hint_level": hint_level})
         return {"hint": hint, "hint_level": hint_level, "points_penalty": hint_level * 10}
 
     except Exception as e:
+        logger.error("Error generating hint", extra={"question_id": question_id, "error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -128,14 +170,18 @@ async def generate_solution_api(
 
         # If solution already exists (e.g., for MCQ questions), return it
         if q.correct_answer and q.solution_steps:
-            print(f"Returning stored solution for question {question_id}")
+            logger.info("Returning stored solution", extra={"question_id": question_id})
             return {"answer": q.correct_answer, "solution_steps": q.solution_steps}
         
-        # Otherwise, generate solution on-demand
-        answer, steps = math_service.generate_solution_for_question(q.question, q.topic)
+        # Otherwise, generate solution on-demand (CPU-bound)
+        answer, steps = await run_in_threadpool(
+            math_service.generate_solution_for_question,
+            q.question,
+            q.topic
+        )
 
         # Normalize answer(s) and store variants for robust validation
-        print(f"Pre-normalizing answer: {answer}")
+        logger.debug("Pre-normalizing answer", extra={"answer": answer})
         normalized_list = math_service.normalize_answer(answer) if answer else []
 
         # Persist solution to DB (store correct answer and steps)
@@ -145,13 +191,13 @@ async def generate_solution_api(
         try:
             db.save_question(q)
         except Exception as db_error:
-            print(f"Warning: Could not update question with solution: {db_error}")
+            logger.warning("Could not update question with solution", extra={"error": str(db_error)})
 
-        # Return the solution (answer + steps). If you don't want to expose the answer to the frontend,
-        # remove it here and only return steps.
+        logger.info("Generated solution on-demand", extra={"question_id": question_id})
         return {"answer": answer, "solution_steps": steps}
 
     except Exception as e:
+        logger.error("Error generating solution", extra={"question_id": question_id, "error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/submit-answer", response_model=AnswerResponse)
@@ -414,14 +460,22 @@ async def quality_summary(db: SimpleDB = Depends(get_db)):
 
 
 @router.get("/quality/questions")
-async def quality_per_question(db: SimpleDB = Depends(get_db)):
-    """Return per-question quality + complexity metrics for table views."""
+async def quality_per_question(
+    db: SimpleDB = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200, description="Maximum number of questions to return"),
+    offset: int = Query(default=0, ge=0, description="Number of questions to skip")
+):
+    """Return per-question quality + complexity metrics for table views with pagination."""
     try:
         questions = _load_all_questions(db)
         if not _QUALITY_TOOLS_AVAILABLE:
-            return []
+            return {"total": 0, "items": [], "limit": limit, "offset": offset}
+        
+        total = len(questions)
+        paginated_questions = questions[offset:offset + limit]
+        
         out: List[Dict[str, Any]] = []
-        for q in questions:
+        for q in paginated_questions:
             comp = ComplexityScorer.calculate_complexity(q.question, q.topic)
             scores = QuestionQualityScorer.score_question(q.question, q.correct_answer, q.topic, q.grade)
             validation = QuestionValidator.validate(q.question, q.correct_answer, q.solution_steps or [], q.grade, q.difficulty, q.topic)
@@ -435,6 +489,9 @@ async def quality_per_question(db: SimpleDB = Depends(get_db)):
                 "quality": scores,
                 "issues": validation.get("issues", [])
             })
-        return out
+        
+        logger.info("Quality questions fetched", extra={"total": total, "returned": len(out), "offset": offset, "limit": limit})
+        return {"total": total, "items": out, "limit": limit, "offset": offset}
     except Exception as e:
+        logger.error("Error fetching quality per question", extra={"error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,20 +1,47 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
+from enum import Enum
 import uuid
+
+
+class DifficultyLevel(str, Enum):
+    """Difficulty levels for questions."""
+    EASY = "easy"
+    MEDIUM = "medium"
+    HARD = "hard"
+
+
+class MathTopic(str, Enum):
+    """Supported math topics."""
+    ALGEBRA = "algebra"
+    GEOMETRY = "geometry"
+    ARITHMETIC = "arithmetic"
+    STATISTICS = "statistics"
+    PROBABILITY = "probability"
+    TRIGONOMETRY = "trigonometry"
+    NUMBER_THEORY = "number_theory"
+    CALCULUS = "calculus"
+
+
+class QuestionType(str, Enum):
+    """Question format types."""
+    OPEN = "open"
+    MCQ = "mcq"
+
 
 class QuestionRequest(BaseModel):
     grade: int = Field(..., ge=1, le=12)
-    difficulty: str = Field(..., pattern="^(easy|medium|hard)$")
-    topic: str
-    question_type: str = Field(default="open", pattern="^(open|mcq)$")  # "open" or "mcq"
+    difficulty: DifficultyLevel
+    topic: MathTopic
+    question_type: QuestionType = QuestionType.OPEN
     
 class QuestionResponse(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     question: str
     grade: int
-    difficulty: str
-    topic: str
+    difficulty: str  # Keep as string for backwards compatibility with stored data
+    topic: str  # Keep as string for backwards compatibility
     correct_answer: str
     normalized_answers: Optional[List[str]] = None
     choices: Optional[List[str]] = None  # Multiple-choice options (correct one included)
