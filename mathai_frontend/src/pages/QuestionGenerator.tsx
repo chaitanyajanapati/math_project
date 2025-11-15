@@ -212,7 +212,9 @@ export default function QuestionGenerator() {
             <span className="text-sm font-medium text-gray-700">Timed Mode</span>
           </label>
           {timedMode && question && (
-            <Timer mode="stopwatch" autoStart={true} onTimeUpdate={() => {}} />
+            <div data-testid="timer">
+              <Timer mode="stopwatch" autoStart={true} onTimeUpdate={() => {}} />
+            </div>
           )}
         </div>
       </div>
@@ -232,12 +234,14 @@ export default function QuestionGenerator() {
             value={grade}
             onChange={(e) => setGrade(Number(e.target.value))}
             className="border-2 border-indigo-200 p-2 w-full rounded-md mb-2 focus:border-indigo-500 focus:outline-none"
+            data-testid="grade-input"
           />
           <label className="block mb-1 font-medium text-gray-700">Difficulty:</label>
             <select
               value={difficulty}
               onChange={(e) => setDifficulty(e.target.value)}
               className="border-2 border-indigo-200 p-2 w-full rounded-md mb-2 focus:border-indigo-500 focus:outline-none"
+              data-testid="difficulty-select"
             >
               <option value="easy">Easy</option>
               <option value="medium">Medium</option>
@@ -248,6 +252,7 @@ export default function QuestionGenerator() {
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               className="border-2 border-indigo-200 p-2 w-full rounded-md mb-2 focus:border-indigo-500 focus:outline-none"
+              data-testid="topic-select"
             >
               <option value="algebra">Algebra</option>
               <option value="geometry">Geometry</option>
@@ -263,6 +268,7 @@ export default function QuestionGenerator() {
               value={questionType}
               onChange={(e) => setQuestionType(e.target.value)}
               className="border-2 border-indigo-200 p-2 w-full rounded-md mb-2 focus:border-indigo-500 focus:outline-none"
+              data-testid="question-type-select"
             >
               <option value="open">Open-ended</option>
               <option value="mcq">Multiple Choice</option>
@@ -280,13 +286,14 @@ export default function QuestionGenerator() {
               onClick={handleGenerate}
               disabled={generating}
               className="bg-blue-600 text-white px-3 py-1.5 rounded-md hover:bg-blue-700 transition shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              data-testid="generate-btn"
             >
               <Sparkles className={`w-4 h-4 ${generating ? 'animate-spin' : ''}`} />
               {generating ? "Generating..." : "Generate Question"}
             </button>
           </div>
           <div className="mt-3 overflow-auto flex-1">
-            <div className="p-3 bg-yellow-50 rounded-md border-2 border-yellow-300 min-h-[100px]">
+            <div className="p-3 bg-yellow-50 rounded-md border-2 border-yellow-300 min-h-[100px]" data-testid="question-panel">
               {question ? (
                 <>
                   <MathRenderer content={question} className="text-gray-800 text-lg whitespace-pre-wrap mb-4" />
@@ -310,6 +317,7 @@ export default function QuestionGenerator() {
               onClick={fetchHint}
               disabled={loadingHint || !questionId || hintLevel >= 3}
               className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              data-testid="hint-btn"
             >
               <Lightbulb className={`w-4 h-4 ${loadingHint ? 'animate-spin' : ''}`} />
               {loadingHint ? "Loading..." : hintLevel === 0 ? "Get Hint" : `Next Hint (${hintLevel}/3)`}
@@ -323,6 +331,7 @@ export default function QuestionGenerator() {
               onClick={fetchSolution}
               disabled={loadingSolution || !questionId}
               className="px-3 py-1.5 bg-gray-800 hover:bg-gray-900 text-white rounded-md shadow-md flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              data-testid="solution-btn"
             >
               <BookOpen className={`w-4 h-4 ${loadingSolution ? 'animate-spin' : ''}`} />
               {loadingSolution ? "Loading..." : "Get Solution"}
@@ -331,7 +340,7 @@ export default function QuestionGenerator() {
           <div className="flex-1 overflow-y-auto">
             {/* Hint Section */}
             {allHints.length > 0 && (
-              <div className="mb-4 space-y-3">
+              <div className="mb-4 space-y-3" data-testid="hints-section">
                 <h4 className="text-sm font-semibold text-indigo-700 mb-2 flex items-center gap-1">
                   <Lightbulb className="w-4 h-4" />
                   Hints ({allHints.length}/3):
@@ -360,7 +369,7 @@ export default function QuestionGenerator() {
                 Solution Steps:
               </h4>
               {solutionSteps && solutionSteps.length > 0 ? (
-                <div className="space-y-3 bg-green-50 p-4 rounded-md border-2 border-green-300 shadow-inner">
+                <div className="space-y-3 bg-green-50 p-4 rounded-md border-2 border-green-300 shadow-inner" data-testid="solution-steps">
                   {solutionSteps.map((s, i) => (
                     <div key={i} className="text-gray-800 leading-relaxed">
                       <MathRenderer content={s} className="inline whitespace-pre-wrap" />
@@ -368,7 +377,7 @@ export default function QuestionGenerator() {
                   ))}
                 </div>
               ) : (
-                <div className="p-4 rounded-md border-2 border-green-200 bg-green-50 text-green-600">
+                <div className="p-4 rounded-md border-2 border-green-200 bg-green-50 text-green-600" data-testid="solution-steps-placeholder">
                   Solution steps will appear here after clicking "Get Solution".
                 </div>
               )}
@@ -392,7 +401,7 @@ export default function QuestionGenerator() {
               )}
             </label>
             {choices && choices.length > 0 ? (
-              <div className="space-y-2">
+              <div className="space-y-2" data-testid="mcq-choices">
                 {choices.map((choice, idx) => (
                   <label
                     key={idx}
@@ -438,6 +447,7 @@ export default function QuestionGenerator() {
                 id="submit-answer-btn"
                 className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-md shadow-md disabled:opacity-50 text-sm"
                 disabled={!questionId || loading || (!studentAnswer.trim() && !selectedChoice)}
+                data-testid="submit-answer-btn"
               >
                 {loading ? "Checking..." : "Submit Answer"}
               </button>

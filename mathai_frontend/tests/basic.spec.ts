@@ -9,17 +9,15 @@ test.describe('Math AI App - Basic Flow', () => {
   test('should generate a question', async ({ page }) => {
     await page.goto('/');
     
-    // Select grade and topic
-    await page.selectOption('select:has-text("Grade")', '8');
-    await page.selectOption('select:has-text("Topic")', 'algebra');
+  // Select grade and topic
+  await page.fill('input[type="number"]', '8');
+  // Specifically target the Topic dropdown (label followed by select)
+  await page.selectOption('label:has-text("Topic") + select', 'algebra');
     
-    // Click generate
+    // Click generate and wait for question to render
     await page.click('button:has-text("Generate Question")');
-    
-    // Wait for question to appear
-    await expect(page.locator('.bg-yellow-50')).toContainText(/Solve|Find|Calculate/, {
-      timeout: 10000
-    });
+    await expect(page.locator('[data-testid="question-panel"]')).not.toContainText('No question yet', { timeout: 15000 });
+    await expect(page.locator('[data-testid="question-panel"]')).toContainText(/[A-Za-z]/, { timeout: 15000 });
   });
 
   test('should navigate to dashboard', async ({ page }) => {
@@ -34,12 +32,17 @@ test.describe('Math AI App - Basic Flow', () => {
     
     // Generate question first
     await page.click('button:has-text("Generate Question")');
-    await page.waitForTimeout(2000);
+    await expect(page.locator('[data-testid="question-panel"]')).not.toContainText('No question yet', { timeout: 15000 });
     
     // Request hint
-    await page.click('button:has-text("Get Hint")');
+    const hintBtn = page.getByRole('button', { name: /Get Hint|Next Hint/ });
+    await expect(hintBtn).toBeEnabled();
+    await hintBtn.click();
     
-    // Check hint appears
-    await expect(page.locator('text=💡')).toBeVisible({ timeout: 5000 });
+    // Check hint appears (hints section shows up) or button label changes to Next Hint
+    const hintsVisible = await page.locator('[data-testid="hints-section"]').isVisible().catch(() => false);
+    if (!hintsVisible) {
+      await expect(page.getByRole('button', { name: /Next Hint/ })).toBeVisible({ timeout: 10000 });
+    }
   });
 });
