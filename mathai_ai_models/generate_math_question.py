@@ -373,6 +373,14 @@ def generate_question(grade: int, difficulty: str, topic: str, model: str = "phi
                 source = "FALLBACK"
 
         # Validate the question if validator is available (simplified - only check critical issues)
+        # Ensure punctuation at end (template outputs may lack terminal punctuation)
+        if question and not question.endswith(("?", ".")):
+            lower_q = question.lower()
+            if any(lower_q.startswith(k) or k in lower_q.split()[:2] for k in ["solve", "what", "find", "calculate", "determine", "how", "simplify", "factor"]):
+                question += "?"
+            else:
+                question += "."
+
         if question_validator is not None and complexity_scorer is not None:
             try:
                 # Just use complexity scoring for now - validation is too strict without answers

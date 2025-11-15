@@ -205,7 +205,7 @@ async def submit_answer(
         
         # Update student progress
         progress = StudentProgress(
-            student_id="test_student",  # TODO: Implement proper student authentication
+            student_id=submission.student_id or "test_student",  # Provided by client or fallback
             question_id=submission.question_id,
             attempts=submission.attempt_number,
             solved=is_correct,

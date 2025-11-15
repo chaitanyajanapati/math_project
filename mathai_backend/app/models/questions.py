@@ -26,6 +26,7 @@ class AnswerSubmission(BaseModel):
     question_id: str
     student_answer: str
     attempt_number: int = Field(default=1)
+    student_id: str | None = None
     
 class AnswerResponse(BaseModel):
     is_correct: bool
