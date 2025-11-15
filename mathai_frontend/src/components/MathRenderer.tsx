@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, memo } from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
@@ -11,8 +11,10 @@ interface MathRendererProps {
 /**
  * MathRenderer component that converts LaTeX expressions to rendered math
  * Detects inline ($...$) and display ($$...$$) math expressions
+ * 
+ * Memoized to prevent unnecessary re-renders when props haven't changed
  */
-export default function MathRenderer({ content, displayMode = false, className = '' }: MathRendererProps) {
+const MathRenderer = memo(function MathRenderer({ content, displayMode = false, className = '' }: MathRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -165,4 +167,6 @@ export default function MathRenderer({ content, displayMode = false, className =
   }, [content, displayMode]);
 
   return <div ref={containerRef} className={className} />;
-}
+});
+
+export default MathRenderer;

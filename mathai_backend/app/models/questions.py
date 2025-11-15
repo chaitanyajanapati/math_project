@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from datetime import datetime
 from enum import Enum
@@ -36,6 +36,14 @@ class QuestionRequest(BaseModel):
     topic: MathTopic
     question_type: QuestionType = QuestionType.OPEN
     
+    @field_validator('grade')
+    @classmethod
+    def validate_grade_range(cls, v: int) -> int:
+        """Additional validation for grade."""
+        if not 1 <= v <= 12:
+            raise ValueError('Grade must be between 1 and 12')
+        return v
+    
 class QuestionResponse(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     question: str
@@ -50,10 +58,26 @@ class QuestionResponse(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 class AnswerSubmission(BaseModel):
-    question_id: str
-    student_answer: str
-    attempt_number: int = Field(default=1)
-    student_id: str | None = None
+    question_id: str = Field(..., min_length=1, description="Question UUID")
+    student_answer: str = Field(..., min_length=1, max_length=1000, description="Student's answer")
+    attempt_number: int = Field(default=1, ge=1, le=10, description="Attempt number (1-10)")
+    student_id: str | None = Field(default=None, description="Student ID (optional)")
+    
+    @field_validator('question_id')
+    @classmethod
+    def validate_question_id(cls, v: str) -> str:
+        """Validate question_id format."""
+        try:
+            uuid.UUID(v)
+        except ValueError:
+            raise ValueError('Invalid question_id format')
+        return v
+    
+    @field_validator('student_answer')
+    @classmethod
+    def validate_student_answer(cls, v: str) -> str:
+        """Sanitize student answer."""
+        return v.strip()
     
 class AnswerResponse(BaseModel):
     is_correct: bool

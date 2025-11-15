@@ -13,6 +13,7 @@ from app.models.questions import (
 from app.utils.math_service import MathAIService
 from app.utils.db import SimpleDB
 from app.logging_config import get_logger
+from app.services.cache import get_cache_service
 
 logger = get_logger(__name__)
 
@@ -24,6 +25,9 @@ def get_math_service():
 
 def get_db():
     return SimpleDB()
+
+def get_cache():
+    return get_cache_service()
 
 @router.post("/generate-question", response_model=QuestionResponse)
 async def generate_question_api(
@@ -111,7 +115,8 @@ async def generate_hint_api(
     question_id: str,
     hint_level: int = 1,  # 1=conceptual, 2=strategic, 3=procedural
     math_service: MathAIService = Depends(get_math_service),
-    db: SimpleDB = Depends(get_db)
+    db: SimpleDB = Depends(get_db),
+    cache = Depends(get_cache)
 ):
     """Generate a progressive hint for a stored question on-demand.
     
@@ -123,6 +128,12 @@ async def generate_hint_api(
     Each level reveals more information. Cost: -10 points per hint level used.
     """
     try:
+        # Check cache first
+        cached_hint = cache.get_hint(question_id, hint_level)
+        if cached_hint:
+            logger.info("Hint retrieved from cache", extra={"question_id": question_id, "hint_level": hint_level})
+            return {"hint": cached_hint, "hint_level": hint_level, "points_penalty": hint_level * 10, "cached": True}
+        
         q = db.get_question(question_id)
         if not q:
             raise HTTPException(status_code=404, detail="Question not found")
@@ -137,6 +148,9 @@ async def generate_hint_api(
             q.topic,
             hint_level=hint_level
         )
+        
+        # Cache the hint
+        cache.cache_hint(question_id, hint_level, hint, ttl_seconds=1800)  # 30 minutes
 
         # Store all hints for tracking (append if multiple levels requested)
         if not q.hints:
@@ -149,7 +163,7 @@ async def generate_hint_api(
             logger.warning("Could not update question with hint", extra={"error": str(db_error)})
 
         logger.info("Generated hint", extra={"question_id": question_id, "hint_level": hint_level})
-        return {"hint": hint, "hint_level": hint_level, "points_penalty": hint_level * 10}
+        return {"hint": hint, "hint_level": hint_level, "points_penalty": hint_level * 10, "cached": False}
 
     except Exception as e:
         logger.error("Error generating hint", extra={"question_id": question_id, "error": str(e)})
@@ -160,44 +174,61 @@ async def generate_hint_api(
 async def generate_solution_api(
     question_id: str,
     math_service: MathAIService = Depends(get_math_service),
-    db: SimpleDB = Depends(get_db)
+    db: SimpleDB = Depends(get_db),
+    cache = Depends(get_cache)
 ):
-    """Generate solution (answer + steps) for a stored question on-demand."""
+    """Generate a detailed solution explanation for a stored question on-demand.
+    
+    Cost: -25 points for solution reveal (reduces 100-point question to 75 points max).
+    """
     try:
+        # Check cache first
+        cached_solution = cache.get_solution(question_id)
+        if cached_solution:
+            logger.info("Solution retrieved from cache", extra={"question_id": question_id})
+            # Cached solution is dict with answer and steps
+            return {**cached_solution, "points_penalty": 25, "cached": True}
+        
         q = db.get_question(question_id)
         if not q:
             raise HTTPException(status_code=404, detail="Question not found")
 
-        # If solution already exists (e.g., for MCQ questions), return it
-        if q.correct_answer and q.solution_steps:
-            logger.info("Returning stored solution", extra={"question_id": question_id})
-            return {"answer": q.correct_answer, "solution_steps": q.solution_steps}
-        
-        # Otherwise, generate solution on-demand (CPU-bound)
+        # Use threadpool for CPU-bound solution generation
         answer, steps = await run_in_threadpool(
             math_service.generate_solution_for_question,
             q.question,
             q.topic
         )
+        
+        # Prepare solution dict
+        solution_dict = {
+            "answer": answer,
+            "solution_steps": steps
+        }
+        
+        # Cache the solution
+        cache.cache_solution(question_id, solution_dict, ttl_seconds=3600)  # 1 hour
 
-        # Normalize answer(s) and store variants for robust validation
-        logger.debug("Pre-normalizing answer", extra={"answer": answer})
-        normalized_list = math_service.normalize_answer(answer) if answer else []
-
-        # Persist solution to DB (store correct answer and steps)
-        q.correct_answer = answer
-        q.normalized_answers = normalized_list
-        q.solution_steps = steps
-        try:
-            db.save_question(q)
-        except Exception as db_error:
-            logger.warning("Could not update question with solution", extra={"error": str(db_error)})
-
-        logger.info("Generated solution on-demand", extra={"question_id": question_id})
-        return {"answer": answer, "solution_steps": steps}
+        logger.info("Generated solution", extra={"question_id": question_id})
+        return {**solution_dict, "points_penalty": 25, "cached": False}
 
     except Exception as e:
         logger.error("Error generating solution", extra={"question_id": question_id, "error": str(e)})
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/cache/stats")
+async def get_cache_stats(cache = Depends(get_cache)):
+    """Get cache statistics for monitoring performance.
+    
+    Returns cache hit rate, size, and other metrics.
+    """
+    try:
+        stats = cache.get_stats()
+        logger.debug("Cache stats retrieved", extra=stats)
+        return stats
+    except Exception as e:
+        logger.error("Error retrieving cache stats", extra={"error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/submit-answer", response_model=AnswerResponse)

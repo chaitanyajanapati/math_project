@@ -21,6 +21,8 @@ wheels/
 .installed.cfg
 *.egg
 .env
+.env.local
+.env.*.local
 .venv
 venv/
 
@@ -45,5 +47,6 @@ build/
 
 # Project specific
 mathai_backend/data/
+data/
 google-chrome-stable_current_amd64.deb
 *.deb
